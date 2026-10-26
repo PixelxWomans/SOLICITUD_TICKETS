@@ -976,8 +976,32 @@
     </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
 <script>
 
+    const SUPABASE_URL = "https://hhwttqvkszlbspcizwxc.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_uL9NT0fyq5Lf18OyiwU_vw_tp7h1LDx";
+
+const supabaseClient = window.supabase.createClient(
+    SUPABASE_URL,
+    SUPABASE_PUBLISHABLE_KEY
+);
+
+async function testSupabaseConnection() {
+    const { data, error } = await supabaseClient
+        .from("solicitudes")
+        .select("id")
+        .limit(1);
+
+    if (error) {
+        console.error("Error conectando con Supabase:", error);
+        return false;
+    }
+
+    console.log("Supabase conectado correctamente:", data);
+    return true;
+}
 /* =========================================================
    CONFIGURACIÓN DE USUARIOS / PERMISOS
 ========================================================= */
@@ -1028,7 +1052,6 @@ const TDM_USERS = [
     "Karina",
     "Natalie",
     "Prueba",
-    "Lenisse",
     // ... (aquí van los ~50 solicitantes, uno por línea)
 ];
 
@@ -1148,54 +1171,45 @@ async function hashPassword(userKey, pass) {
     return "d33:" + (h >>> 0).toString(16);
 }
 
-/* Las contraseñas cambiadas se guardan localmente en este navegador.
-   Nota: no se sincronizan entre computadoras ni perfiles de navegador. */
-const PASSWORDS_STORAGE_KEY = "sitodep_tdm_passwords_local_v1";
-
+/* Las contraseñas cambiadas se guardan en Supabase (tabla usuarios_claves),
+   así valen en cualquier PC. Si el usuario nunca la cambió, usa la inicial. */
 async function fetchStoredHash(userKey) {
-    try {
-        const all = JSON.parse(localStorage.getItem(PASSWORDS_STORAGE_KEY) || "{}");
-        const saved = all[userKey];
-        if (saved && Number(saved.reset_version) === PASSWORD_RESET_VERSION) {
-            return saved.clave_hash || null;
-        }
-        return null;
-    } catch (error) {
-        console.error("Error leyendo contraseña local:", error);
-        return null;
+    const { data, error } = await supabaseClient
+        .from("usuarios_claves")
+        .select("clave_hash, reset_version")
+        .eq("usuario", userKey)
+        .maybeSingle();
+
+    if (error) {
+        console.error("❌ Error leyendo contraseña en Supabase:", error);
+        throw error;
     }
+    if (data && Number(data.reset_version) === PASSWORD_RESET_VERSION) return data.clave_hash;
+    return null;   // sin contraseña propia (o reiniciada): aplica la inicial
 }
 
 async function saveStoredHash(userKey, hash) {
-    try {
-        const all = JSON.parse(localStorage.getItem(PASSWORDS_STORAGE_KEY) || "{}");
-        all[userKey] = {
+    const { error } = await supabaseClient
+        .from("usuarios_claves")
+        .upsert({
+            usuario: userKey,
             clave_hash: hash,
             reset_version: PASSWORD_RESET_VERSION,
             updated_at: new Date().toISOString()
-        };
-        localStorage.setItem(PASSWORDS_STORAGE_KEY, JSON.stringify(all));
-    } catch (error) {
-        console.error("Error guardando contraseña local:", error);
-        throw new Error("No se pudo guardar la contraseña en este navegador.");
+        }, { onConflict: "usuario" });
+
+    if (error) {
+        console.error("❌ Error guardando contraseña en Supabase:", error);
+        throw error;
     }
 }
 
 async function checkPassword(userKey, pass) {
-    const saved = await fetchStoredHash(userKey);
+    const saved = await fetchStoredHash(userKey);   // puede lanzar error si Supabase falla
     if (saved) return saved === await hashPassword(userKey, pass);
     return pass === DEFAULT_PASSWORD;
 }
 
-
-// =========================================================
-// CONFIGURACIÓN DE ALMACENAMIENTO COMPARTIDO (Google Sheets)
-// Después de desplegar Apps Script, pega aquí la URL terminada en /exec.
-// Si queda vacía, SITODEP seguirá usando el almacenamiento local del navegador.
-// NOTA: esta integración inicial es para pruebas; no usar datos confidenciales
-// hasta implementar autenticación y permisos verificados en el servidor.
-const SITODEP_GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzS57iJjtn7coUejb5qR0JBC_ZAuN9hvxQMjqR9fmknVGNZ9DSaAr4EdEIN5ceDJC6f/exec";
-const SITODEP_USA_GOOGLE_SHEETS = SITODEP_GOOGLE_SCRIPT_URL.startsWith("https://script.google.com/macros/s/") && SITODEP_GOOGLE_SCRIPT_URL.includes("/exec");
 
 const OLD_STORAGE_KEY = "sitodep_tdm_requests_v9";     // versión anterior (localStorage)
 const FALLBACK_KEY    = "sitodep_tdm_requests_v10";    // solo si IndexedDB no está disponible
@@ -1213,9 +1227,10 @@ let editingTicketId = null;      // si tiene un número, el formulario está en 
 let editEvidenciasKeep = [];     // evidencias que se conservan al editar
 let filterOnlyMine = false;
 let tickets = [];
-// Evita que una recarga local sobrescriba el movimiento mientras se está guardando.
+// Evita que una recarga de Supabase sobrescriba el movimiento mientras se está guardando.
 const pendingTicketWrites = new Set();
 
+testSupabaseConnection();
 
 let dbRef = null;          // conexión IndexedDB (null = modo respaldo localStorage)
 let channel = null;        // sincroniza pestañas / usuarios en el mismo navegador
@@ -1296,95 +1311,200 @@ function errMsg(err) {
     return (err.message || err.details || String(err)).toString();
 }
 
-// Carga tickets desde Google Sheets mediante JSONP o, si no se configuró la URL,
-// desde IndexedDB/localStorage como antes.
-function jsonpRequest(params = {}) {
-    return new Promise((resolve, reject) => {
-        if (!SITODEP_USA_GOOGLE_SHEETS) return reject(new Error("La URL de Google Apps Script no está configurada."));
-        const callbackName = "__sitodep_jsonp_" + Date.now() + "_" + Math.random().toString(36).slice(2);
-        const script = document.createElement("script");
-        const cleanup = () => {
-            try { delete window[callbackName]; } catch { window[callbackName] = undefined; }
-            if (script.parentNode) script.parentNode.removeChild(script);
-            clearTimeout(timer);
-        };
-        const timer = setTimeout(() => { cleanup(); reject(new Error("Tiempo agotado consultando Google Sheets. Verifica la URL y la implementación de Apps Script.")); }, 20000);
-        window[callbackName] = data => { cleanup(); resolve(data); };
-        const query = new URLSearchParams({ ...params, callback: callbackName, _: String(Date.now()) });
-        script.onerror = () => { cleanup(); reject(new Error("No se pudo conectar con Google Apps Script.")); };
-        script.src = SITODEP_GOOGLE_SCRIPT_URL + "?" + query.toString();
-        document.head.appendChild(script);
-    });
-}
-
+// Supabase es la fuente de verdad: todos los usuarios ven los mismos tickets
 async function loadAllTickets() {
-    let data = [];
-    if (SITODEP_USA_GOOGLE_SHEETS) {
-        const respuesta = await jsonpRequest({ action: "list" });
-        if (!respuesta || respuesta.ok !== true || !Array.isArray(respuesta.tickets)) {
-            throw new Error((respuesta && respuesta.error) || "Google Sheets devolvió una respuesta no válida.");
-        }
-        data = respuesta.tickets;
-    } else if (dbRef) {
-        data = await dbGetAll();
-    } else {
-        try { data = JSON.parse(localStorage.getItem(FALLBACK_KEY) || "[]"); }
-        catch (error) {
-            console.error("Error leyendo solicitudes del almacenamiento local:", error);
-            data = [];
-        }
+    const { data, error } = await supabaseClient
+        .from("solicitudes")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+    if (error) {
+        console.error("❌ Error leyendo solicitudes de Supabase:", error);
+        throw error;
     }
 
-    if (!Array.isArray(data)) data = [];
     const seen = new Set();
-    return data.filter(ticket => {
-        if (!ticket || ticket.id == null || isNaN(Number(ticket.id))) return false;
-        const key = String(ticket.id);
-        if (seen.has(key)) return false;
+    const result = [];
+    for (const row of data || []) {
+        const key = String(row.numero_solicitud);
+        if (seen.has(key)) continue;          // si hay duplicados, queda el más reciente
         seen.add(key);
-        return true;
-    }).sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+        if (isNaN(Number(row.numero_solicitud))) continue;
+        result.push(rowToTicket(row));
+    }
+    return result;
 }
 
 async function persistTicket(ticket, isNew = false) {
-    if (!ticket || ticket.id == null) throw new Error("No se puede guardar una solicitud sin número de identificación.");
-    const copy = JSON.parse(JSON.stringify(ticket));
 
-    if (SITODEP_USA_GOOGLE_SHEETS) {
-        // POST sencillo para evitar la prevalidación CORS. La confirmación se hace
-        // después consultando de nuevo la hoja, porque el navegador no puede leer
-        // directamente la respuesta de un POST no-cors a Apps Script.
-        const payload = JSON.stringify({ action: "save", ticket: copy });
-        await fetch(SITODEP_GOOGLE_SCRIPT_URL, {
-            method: "POST",
-            mode: "no-cors",
-            headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
-            body: "payload=" + encodeURIComponent(payload)
-        });
-        await new Promise(resolve => setTimeout(resolve, 900));
-        const respuesta = await jsonpRequest({ action: "list" });
-        const guardado = respuesta && Array.isArray(respuesta.tickets)
-            ? respuesta.tickets.find(item => String(item.id) === String(copy.id))
-            : null;
-        if (!guardado || JSON.stringify(guardado) !== JSON.stringify(copy)) {
-            throw new Error("No se pudo confirmar el guardado en Google Sheets. Revisa la implementación de Apps Script, los permisos y los límites de tamaño de las evidencias.");
+    console.log("🔥 PERSIST TICKET:", ticket);
+
+    const estadoSupabase =
+        ticket.status === "proceso"
+            ? "En proceso"
+            : ticket.status === "completada"
+                ? "Completada"
+                : ticket.status === "cancelada"
+                    ? "Cancelada"
+                    : "Pendiente";
+
+    const datosActualizados = {
+        requester: ticket.requester || "",
+        reporta: ticket.reporta || "",
+        contacto: ticket.contacto || "",
+
+        tipo: ticket.tipo || "",
+        accion: ticket.accion || "",
+
+        cliente: ticket.cliente || "",
+        sucursal: ticket.sucursal || "",
+        prioridad: ticket.prioridad || "Normal",
+        recibe: ticket.recibe || "",
+        fechaRecepcion: ticket.fechaRecepcion || "",
+
+        modeloActual: ticket.modeloActual || "",
+        serialActual: ticket.serialActual || "",
+        modeloNuevo: ticket.modeloNuevo || "",
+        serialNuevo: ticket.serialNuevo || "",
+
+        facturacion: ticket.facturacion || "",
+        tipoMantenimiento: ticket.tipoMantenimiento || "",
+        usuariosAfectados: ticket.usuariosAfectados || "",
+        escaneo: ticket.escaneo || "",
+        cantidadUsuarios: ticket.cantidadUsuarios || "",
+        conectividad: ticket.conectividad || "",
+        incluyeInstalacion: ticket.incluyeInstalacion || "",
+        departamento: ticket.departamento || "",
+        ultimaReparacion: ticket.ultimaReparacion || "",
+        delivery: ticket.delivery || false,
+
+        notas: ticket.notas || "",
+        evidencias: ticket.evidencias || [],
+
+        createdAt: ticket.createdAt || "",
+
+        movedBy: ticket.movedBy || "",
+        movedAt: ticket.movedAt || "",
+        assignedCAC: ticket.assignedCAC || "",
+        assignedCACAt: ticket.assignedCACAt || "",
+
+        movementHistory: ticket.movementHistory || [],
+
+        // Edición de la solicitud
+        edited: !!ticket.edited,
+        editCount: ticket.editCount || 0,
+        lastEditedBy: ticket.lastEditedBy || "",
+        lastEditedAt: ticket.lastEditedAt || "",
+        editHistory: ticket.editHistory || [],
+        editAccess: ticket.editAccess || { granted: false },
+
+        ticketNumber: ticket.ticketNumber || "",
+
+        completedBy: ticket.completedBy || "",
+        completedAt: ticket.completedAt || "",
+
+        cancelReason: ticket.cancelReason || "",
+        canceledBy: ticket.canceledBy || "",
+        canceledAt: ticket.canceledAt || ""
+    };
+
+
+    // Copia local opcional (si falla, no afecta el guardado real)
+    try { if (dbRef) await dbPut(ticket); } catch (e) { console.warn("Copia local no guardada:", e); }
+
+
+    // =========================================================
+    // 2. BUSCAR SI YA EXISTE EN SUPABASE
+    // =========================================================
+
+    let existingRows = [];
+    let searchError = null;
+    if (!isNew) {
+        const r = await supabaseClient
+            .from("solicitudes")
+            .select("id")
+            .eq("numero_solicitud", String(ticket.id))
+            .order("created_at", { ascending: false })
+            .limit(1);
+        existingRows = r.data || [];
+        searchError = r.error;
+    }
+
+    if (searchError) {
+        console.error("❌ Error buscando solicitud en Supabase:", searchError);
+        throw searchError;
+    }
+
+
+    // =========================================================
+    // 3. SI YA EXISTE → UPDATE
+    // =========================================================
+
+    if (existingRows && existingRows.length > 0) {
+
+        const dbId = existingRows[0].id;
+
+        const { data: updRows, error } = await supabaseClient
+            .from("solicitudes")
+            .update({
+                tipo_solicitud: ticket.tipo || "Sin especificar",
+                cliente: ticket.cliente || "",
+                solicitado_por: ticket.reporta || ticket.requester || "",
+                fecha_solicitud: ticket.createdAt || new Date().toISOString(),
+                prioridad: ticket.prioridad || "Normal",
+                estado: estadoSupabase,
+                numero_ticket: ticket.ticketNumber || null,
+                datos: datosActualizados,
+                updated_at: new Date().toISOString()
+            })
+            .eq("id", dbId)
+            .select();
+
+        if (error) {
+            console.error("❌ Error actualizando solicitud en Supabase:", error);
+            throw error;
         }
-        console.log(isNew ? "Solicitud creada en Google Sheets:" : "Solicitud guardada en Google Sheets:", copy.id);
-        return copy;
+
+        if (!updRows || !updRows.length) {
+            const e = new Error("Supabase no permitió actualizar la solicitud (falta la política UPDATE en la tabla 'solicitudes').");
+            console.error("❌", e.message);
+            throw e;
+        }
+
+        console.log("✅ SOLICITUD ACTUALIZADA EN SUPABASE:", updRows[0]);
+
+        return updRows[0];
     }
 
-    if (dbRef) {
-        await dbPut(copy);
-    } else {
-        let all = [];
-        try { all = JSON.parse(localStorage.getItem(FALLBACK_KEY) || "[]"); } catch { all = []; }
-        if (!Array.isArray(all)) all = [];
-        const index = all.findIndex(item => String(item.id) === String(copy.id));
-        if (index >= 0) all[index] = copy; else all.push(copy);
-        localStorage.setItem(FALLBACK_KEY, JSON.stringify(all));
+
+    // =========================================================
+    // 4. SI NO EXISTE → INSERTAR NUEVA
+    // =========================================================
+
+    const { data, error } = await supabaseClient
+        .from("solicitudes")
+        .insert({
+            numero_solicitud: String(ticket.id),
+            tipo_solicitud: ticket.tipo || "Sin especificar",
+            cliente: ticket.cliente || "",
+            solicitado_por: ticket.reporta || ticket.requester || "",
+            fecha_solicitud: ticket.createdAt || new Date().toISOString(),
+            prioridad: ticket.prioridad || "Normal",
+            estado: estadoSupabase,
+            numero_ticket: ticket.ticketNumber || null,
+            datos: datosActualizados
+        })
+        .select()
+        .single();
+
+    if (error) {
+        console.error("❌ Error creando solicitud en Supabase:", error);
+        throw error;
     }
-    console.log(isNew ? "Solicitud creada en almacenamiento local:" : "Solicitud guardada en almacenamiento local:", copy.id);
-    return copy;
+
+    console.log("✅ SOLICITUD CREADA EN SUPABASE:", data);
+
+    return data;
 }
 
 async function reloadTickets() {
@@ -1423,36 +1543,29 @@ async function reloadAndRender() {
 }
 
 async function initStorage() {
-    if (SITODEP_USA_GOOGLE_SHEETS) {
-        dbRef = null;
-        try {
-            await reloadTickets();
-            console.info("SITODEP conectado a Google Sheets. Tickets cargados:", tickets.length);
-        } catch (err) {
-            console.error("No se pudo conectar a Google Sheets:", err);
-            showCustomAlert("No se pudo conectar con la base compartida de Google Sheets. Verifica la URL /exec y que Apps Script esté implementado como aplicación web.\n\nDetalle: " + errMsg(err), "Error de conexión", "error");
-            throw err;
-        }
-        window.addEventListener("focus", reloadAndRender);
-        document.addEventListener("visibilitychange", () => { if (!document.hidden) reloadAndRender(); });
-        setInterval(reloadAndRender, 15000);
-        return;
-    }
-
-    try { dbRef = await openDB(); }
-    catch (err) {
+    try {
+        dbRef = await openDB();
+    } catch (err) {
         console.warn("IndexedDB no disponible, usando localStorage:", err);
         dbRef = null;
     }
+
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch {}
+
     try { await reloadTickets(); } catch (err) { console.error("No se pudieron cargar las solicitudes:", err); }
+
     try {
         channel = new BroadcastChannel("sitodep_tdm_channel");
         channel.onmessage = () => reloadAndRender();
     } catch {}
-    window.addEventListener("storage", e => { if (e.key === FALLBACK_KEY) reloadAndRender(); });
+
+    window.addEventListener("storage", e => {
+        if (e.key === FALLBACK_KEY) reloadAndRender();
+    });
     window.addEventListener("focus", reloadAndRender);
-    document.addEventListener("visibilitychange", () => { if (!document.hidden) reloadAndRender(); });
+    document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) reloadAndRender();
+    });
     setInterval(reloadAndRender, 10000);
 }
 
@@ -1727,7 +1840,7 @@ async function handleChangePassword(e) {
     try {
         await saveStoredHash(currentUser, await hashPassword(currentUser, next));
     } catch (err) {
-        showCustomAlert("No se pudo guardar la contraseña local.\n\nDetalle: " + errMsg(err), "Error al Guardar", "error");
+        showCustomAlert("No se pudo guardar la contraseña.\n\nDetalle: " + errMsg(err), "Error al Guardar", "error");
         return;
     }
 
