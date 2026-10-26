@@ -976,32 +976,8 @@
     </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-
 <script>
 
-    const SUPABASE_URL = "https://yhwkmcavrarqbthsudtb.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_cOoBJ_XN6aQovy0lb4U_RQ_jxFNB9kv";
-
-const supabaseClient = window.supabase.createClient(
-    SUPABASE_URL,
-    SUPABASE_PUBLISHABLE_KEY
-);
-
-async function testSupabaseConnection() {
-    const { data, error } = await supabaseClient
-        .from("solicitudes")
-        .select("id")
-        .limit(1);
-
-    if (error) {
-        console.error("Error conectando con Supabase:", error);
-        return false;
-    }
-
-    console.log("Supabase conectado correctamente:", data);
-    return true;
-}
 /* =========================================================
    CONFIGURACIÓN DE USUARIOS / PERMISOS
 ========================================================= */
@@ -1171,41 +1147,41 @@ async function hashPassword(userKey, pass) {
     return "d33:" + (h >>> 0).toString(16);
 }
 
-/* Las contraseñas cambiadas se guardan en Supabase (tabla usuarios_claves),
-   así valen en cualquier PC. Si el usuario nunca la cambió, usa la inicial. */
-async function fetchStoredHash(userKey) {
-    const { data, error } = await supabaseClient
-        .from("usuarios_claves")
-        .select("clave_hash, reset_version")
-        .eq("usuario", userKey)
-        .maybeSingle();
+/* Las contraseñas cambiadas se guardan localmente en este navegador.
+   Nota: no se sincronizan entre computadoras ni perfiles de navegador. */
+const PASSWORDS_STORAGE_KEY = "sitodep_tdm_passwords_local_v1";
 
-    if (error) {
-        console.error("❌ Error leyendo contraseña en Supabase:", error);
-        throw error;
+async function fetchStoredHash(userKey) {
+    try {
+        const all = JSON.parse(localStorage.getItem(PASSWORDS_STORAGE_KEY) || "{}");
+        const saved = all[userKey];
+        if (saved && Number(saved.reset_version) === PASSWORD_RESET_VERSION) {
+            return saved.clave_hash || null;
+        }
+        return null;
+    } catch (error) {
+        console.error("Error leyendo contraseña local:", error);
+        return null;
     }
-    if (data && Number(data.reset_version) === PASSWORD_RESET_VERSION) return data.clave_hash;
-    return null;   // sin contraseña propia (o reiniciada): aplica la inicial
 }
 
 async function saveStoredHash(userKey, hash) {
-    const { error } = await supabaseClient
-        .from("usuarios_claves")
-        .upsert({
-            usuario: userKey,
+    try {
+        const all = JSON.parse(localStorage.getItem(PASSWORDS_STORAGE_KEY) || "{}");
+        all[userKey] = {
             clave_hash: hash,
             reset_version: PASSWORD_RESET_VERSION,
             updated_at: new Date().toISOString()
-        }, { onConflict: "usuario" });
-
-    if (error) {
-        console.error("❌ Error guardando contraseña en Supabase:", error);
-        throw error;
+        };
+        localStorage.setItem(PASSWORDS_STORAGE_KEY, JSON.stringify(all));
+    } catch (error) {
+        console.error("Error guardando contraseña local:", error);
+        throw new Error("No se pudo guardar la contraseña en este navegador.");
     }
 }
 
 async function checkPassword(userKey, pass) {
-    const saved = await fetchStoredHash(userKey);   // puede lanzar error si Supabase falla
+    const saved = await fetchStoredHash(userKey);
     if (saved) return saved === await hashPassword(userKey, pass);
     return pass === DEFAULT_PASSWORD;
 }
@@ -1227,10 +1203,9 @@ let editingTicketId = null;      // si tiene un número, el formulario está en 
 let editEvidenciasKeep = [];     // evidencias que se conservan al editar
 let filterOnlyMine = false;
 let tickets = [];
-// Evita que una recarga de Supabase sobrescriba el movimiento mientras se está guardando.
+// Evita que una recarga local sobrescriba el movimiento mientras se está guardando.
 const pendingTicketWrites = new Set();
 
-testSupabaseConnection();
 
 let dbRef = null;          // conexión IndexedDB (null = modo respaldo localStorage)
 let channel = null;        // sincroniza pestañas / usuarios en el mismo navegador
@@ -1311,200 +1286,56 @@ function errMsg(err) {
     return (err.message || err.details || String(err)).toString();
 }
 
-// Supabase es la fuente de verdad: todos los usuarios ven los mismos tickets
+// Almacenamiento local: cada navegador/computadora mantiene sus propios tickets.
 async function loadAllTickets() {
-    const { data, error } = await supabaseClient
-        .from("solicitudes")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-    if (error) {
-        console.error("❌ Error leyendo solicitudes de Supabase:", error);
-        throw error;
+    let data = [];
+    if (dbRef) {
+        data = await dbGetAll();
+    } else {
+        try {
+            data = JSON.parse(localStorage.getItem(FALLBACK_KEY) || "[]");
+        } catch (error) {
+            console.error("Error leyendo solicitudes del almacenamiento local:", error);
+            data = [];
+        }
     }
 
+    if (!Array.isArray(data)) data = [];
     const seen = new Set();
-    const result = [];
-    for (const row of data || []) {
-        const key = String(row.numero_solicitud);
-        if (seen.has(key)) continue;          // si hay duplicados, queda el más reciente
+    return data.filter(ticket => {
+        if (!ticket || ticket.id == null || isNaN(Number(ticket.id))) return false;
+        const key = String(ticket.id);
+        if (seen.has(key)) return false;
         seen.add(key);
-        if (isNaN(Number(row.numero_solicitud))) continue;
-        result.push(rowToTicket(row));
-    }
-    return result;
+        return true;
+    }).sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
 }
 
 async function persistTicket(ticket, isNew = false) {
-
-    console.log("🔥 PERSIST TICKET:", ticket);
-
-    const estadoSupabase =
-        ticket.status === "proceso"
-            ? "En proceso"
-            : ticket.status === "completada"
-                ? "Completada"
-                : ticket.status === "cancelada"
-                    ? "Cancelada"
-                    : "Pendiente";
-
-    const datosActualizados = {
-        requester: ticket.requester || "",
-        reporta: ticket.reporta || "",
-        contacto: ticket.contacto || "",
-
-        tipo: ticket.tipo || "",
-        accion: ticket.accion || "",
-
-        cliente: ticket.cliente || "",
-        sucursal: ticket.sucursal || "",
-        prioridad: ticket.prioridad || "Normal",
-        recibe: ticket.recibe || "",
-        fechaRecepcion: ticket.fechaRecepcion || "",
-
-        modeloActual: ticket.modeloActual || "",
-        serialActual: ticket.serialActual || "",
-        modeloNuevo: ticket.modeloNuevo || "",
-        serialNuevo: ticket.serialNuevo || "",
-
-        facturacion: ticket.facturacion || "",
-        tipoMantenimiento: ticket.tipoMantenimiento || "",
-        usuariosAfectados: ticket.usuariosAfectados || "",
-        escaneo: ticket.escaneo || "",
-        cantidadUsuarios: ticket.cantidadUsuarios || "",
-        conectividad: ticket.conectividad || "",
-        incluyeInstalacion: ticket.incluyeInstalacion || "",
-        departamento: ticket.departamento || "",
-        ultimaReparacion: ticket.ultimaReparacion || "",
-        delivery: ticket.delivery || false,
-
-        notas: ticket.notas || "",
-        evidencias: ticket.evidencias || [],
-
-        createdAt: ticket.createdAt || "",
-
-        movedBy: ticket.movedBy || "",
-        movedAt: ticket.movedAt || "",
-        assignedCAC: ticket.assignedCAC || "",
-        assignedCACAt: ticket.assignedCACAt || "",
-
-        movementHistory: ticket.movementHistory || [],
-
-        // Edición de la solicitud
-        edited: !!ticket.edited,
-        editCount: ticket.editCount || 0,
-        lastEditedBy: ticket.lastEditedBy || "",
-        lastEditedAt: ticket.lastEditedAt || "",
-        editHistory: ticket.editHistory || [],
-        editAccess: ticket.editAccess || { granted: false },
-
-        ticketNumber: ticket.ticketNumber || "",
-
-        completedBy: ticket.completedBy || "",
-        completedAt: ticket.completedAt || "",
-
-        cancelReason: ticket.cancelReason || "",
-        canceledBy: ticket.canceledBy || "",
-        canceledAt: ticket.canceledAt || ""
-    };
-
-
-    // Copia local opcional (si falla, no afecta el guardado real)
-    try { if (dbRef) await dbPut(ticket); } catch (e) { console.warn("Copia local no guardada:", e); }
-
-
-    // =========================================================
-    // 2. BUSCAR SI YA EXISTE EN SUPABASE
-    // =========================================================
-
-    let existingRows = [];
-    let searchError = null;
-    if (!isNew) {
-        const r = await supabaseClient
-            .from("solicitudes")
-            .select("id")
-            .eq("numero_solicitud", String(ticket.id))
-            .order("created_at", { ascending: false })
-            .limit(1);
-        existingRows = r.data || [];
-        searchError = r.error;
+    if (!ticket || ticket.id == null) {
+        throw new Error("No se puede guardar una solicitud sin número de identificación.");
     }
 
-    if (searchError) {
-        console.error("❌ Error buscando solicitud en Supabase:", searchError);
-        throw searchError;
-    }
-
-
-    // =========================================================
-    // 3. SI YA EXISTE → UPDATE
-    // =========================================================
-
-    if (existingRows && existingRows.length > 0) {
-
-        const dbId = existingRows[0].id;
-
-        const { data: updRows, error } = await supabaseClient
-            .from("solicitudes")
-            .update({
-                tipo_solicitud: ticket.tipo || "Sin especificar",
-                cliente: ticket.cliente || "",
-                solicitado_por: ticket.reporta || ticket.requester || "",
-                fecha_solicitud: ticket.createdAt || new Date().toISOString(),
-                prioridad: ticket.prioridad || "Normal",
-                estado: estadoSupabase,
-                numero_ticket: ticket.ticketNumber || null,
-                datos: datosActualizados,
-                updated_at: new Date().toISOString()
-            })
-            .eq("id", dbId)
-            .select();
-
-        if (error) {
-            console.error("❌ Error actualizando solicitud en Supabase:", error);
-            throw error;
+    // Guardamos el objeto completo para conservar historial, evidencias y campos adicionales.
+    const copy = JSON.parse(JSON.stringify(ticket));
+    if (dbRef) {
+        await dbPut(copy);
+    } else {
+        let all = [];
+        try {
+            all = JSON.parse(localStorage.getItem(FALLBACK_KEY) || "[]");
+        } catch {
+            all = [];
         }
-
-        if (!updRows || !updRows.length) {
-            const e = new Error("Supabase no permitió actualizar la solicitud (falta la política UPDATE en la tabla 'solicitudes').");
-            console.error("❌", e.message);
-            throw e;
-        }
-
-        console.log("✅ SOLICITUD ACTUALIZADA EN SUPABASE:", updRows[0]);
-
-        return updRows[0];
+        if (!Array.isArray(all)) all = [];
+        const index = all.findIndex(item => String(item.id) === String(copy.id));
+        if (index >= 0) all[index] = copy;
+        else all.push(copy);
+        localStorage.setItem(FALLBACK_KEY, JSON.stringify(all));
     }
 
-
-    // =========================================================
-    // 4. SI NO EXISTE → INSERTAR NUEVA
-    // =========================================================
-
-    const { data, error } = await supabaseClient
-        .from("solicitudes")
-        .insert({
-            numero_solicitud: String(ticket.id),
-            tipo_solicitud: ticket.tipo || "Sin especificar",
-            cliente: ticket.cliente || "",
-            solicitado_por: ticket.reporta || ticket.requester || "",
-            fecha_solicitud: ticket.createdAt || new Date().toISOString(),
-            prioridad: ticket.prioridad || "Normal",
-            estado: estadoSupabase,
-            numero_ticket: ticket.ticketNumber || null,
-            datos: datosActualizados
-        })
-        .select()
-        .single();
-
-    if (error) {
-        console.error("❌ Error creando solicitud en Supabase:", error);
-        throw error;
-    }
-
-    console.log("✅ SOLICITUD CREADA EN SUPABASE:", data);
-
-    return data;
+    console.log(isNew ? "Solicitud creada en almacenamiento local:" : "Solicitud guardada en almacenamiento local:", copy.id);
+    return copy;
 }
 
 async function reloadTickets() {
@@ -1840,7 +1671,7 @@ async function handleChangePassword(e) {
     try {
         await saveStoredHash(currentUser, await hashPassword(currentUser, next));
     } catch (err) {
-        showCustomAlert("No se pudo guardar la contraseña.\n\nDetalle: " + errMsg(err), "Error al Guardar", "error");
+        showCustomAlert("No se pudo guardar la contraseña local.\n\nDetalle: " + errMsg(err), "Error al Guardar", "error");
         return;
     }
 
