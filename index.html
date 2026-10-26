@@ -1188,6 +1188,15 @@ async function checkPassword(userKey, pass) {
 }
 
 
+// =========================================================
+// CONFIGURACIÓN DE ALMACENAMIENTO COMPARTIDO (Google Sheets)
+// Después de desplegar Apps Script, pega aquí la URL terminada en /exec.
+// Si queda vacía, SITODEP seguirá usando el almacenamiento local del navegador.
+// NOTA: esta integración inicial es para pruebas; no usar datos confidenciales
+// hasta implementar autenticación y permisos verificados en el servidor.
+const SITODEP_GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyUI9U4nzxPLForXXXKWDEmHm5eRXG0yz2-B9InFKn85f0nsnqq3yv19cUq5I3js4cF/exec";
+const SITODEP_USA_GOOGLE_SHEETS = SITODEP_GOOGLE_SCRIPT_URL.startsWith("https://script.google.com/macros/s/") && SITODEP_GOOGLE_SCRIPT_URL.includes("/exec");
+
 const OLD_STORAGE_KEY = "sitodep_tdm_requests_v9";     // versión anterior (localStorage)
 const FALLBACK_KEY    = "sitodep_tdm_requests_v10";    // solo si IndexedDB no está disponible
 const MIGRATED_KEY    = "sitodep_tdm_migrated_v10";
@@ -1287,15 +1296,40 @@ function errMsg(err) {
     return (err.message || err.details || String(err)).toString();
 }
 
-// Almacenamiento local: cada navegador/computadora mantiene sus propios tickets.
+// Carga tickets desde Google Sheets mediante JSONP o, si no se configuró la URL,
+// desde IndexedDB/localStorage como antes.
+function jsonpRequest(params = {}) {
+    return new Promise((resolve, reject) => {
+        if (!SITODEP_USA_GOOGLE_SHEETS) return reject(new Error("La URL de Google Apps Script no está configurada."));
+        const callbackName = "__sitodep_jsonp_" + Date.now() + "_" + Math.random().toString(36).slice(2);
+        const script = document.createElement("script");
+        const cleanup = () => {
+            try { delete window[callbackName]; } catch { window[callbackName] = undefined; }
+            if (script.parentNode) script.parentNode.removeChild(script);
+            clearTimeout(timer);
+        };
+        const timer = setTimeout(() => { cleanup(); reject(new Error("Tiempo agotado consultando Google Sheets. Verifica la URL y la implementación de Apps Script.")); }, 20000);
+        window[callbackName] = data => { cleanup(); resolve(data); };
+        const query = new URLSearchParams({ ...params, callback: callbackName, _: String(Date.now()) });
+        script.onerror = () => { cleanup(); reject(new Error("No se pudo conectar con Google Apps Script.")); };
+        script.src = SITODEP_GOOGLE_SCRIPT_URL + "?" + query.toString();
+        document.head.appendChild(script);
+    });
+}
+
 async function loadAllTickets() {
     let data = [];
-    if (dbRef) {
+    if (SITODEP_USA_GOOGLE_SHEETS) {
+        const respuesta = await jsonpRequest({ action: "list" });
+        if (!respuesta || respuesta.ok !== true || !Array.isArray(respuesta.tickets)) {
+            throw new Error((respuesta && respuesta.error) || "Google Sheets devolvió una respuesta no válida.");
+        }
+        data = respuesta.tickets;
+    } else if (dbRef) {
         data = await dbGetAll();
     } else {
-        try {
-            data = JSON.parse(localStorage.getItem(FALLBACK_KEY) || "[]");
-        } catch (error) {
+        try { data = JSON.parse(localStorage.getItem(FALLBACK_KEY) || "[]"); }
+        catch (error) {
             console.error("Error leyendo solicitudes del almacenamiento local:", error);
             data = [];
         }
@@ -1313,28 +1347,42 @@ async function loadAllTickets() {
 }
 
 async function persistTicket(ticket, isNew = false) {
-    if (!ticket || ticket.id == null) {
-        throw new Error("No se puede guardar una solicitud sin número de identificación.");
+    if (!ticket || ticket.id == null) throw new Error("No se puede guardar una solicitud sin número de identificación.");
+    const copy = JSON.parse(JSON.stringify(ticket));
+
+    if (SITODEP_USA_GOOGLE_SHEETS) {
+        // POST sencillo para evitar la prevalidación CORS. La confirmación se hace
+        // después consultando de nuevo la hoja, porque el navegador no puede leer
+        // directamente la respuesta de un POST no-cors a Apps Script.
+        const payload = JSON.stringify({ action: "save", ticket: copy });
+        await fetch(SITODEP_GOOGLE_SCRIPT_URL, {
+            method: "POST",
+            mode: "no-cors",
+            headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+            body: "payload=" + encodeURIComponent(payload)
+        });
+        await new Promise(resolve => setTimeout(resolve, 900));
+        const respuesta = await jsonpRequest({ action: "list" });
+        const guardado = respuesta && Array.isArray(respuesta.tickets)
+            ? respuesta.tickets.find(item => String(item.id) === String(copy.id))
+            : null;
+        if (!guardado || JSON.stringify(guardado) !== JSON.stringify(copy)) {
+            throw new Error("No se pudo confirmar el guardado en Google Sheets. Revisa la implementación de Apps Script, los permisos y los límites de tamaño de las evidencias.");
+        }
+        console.log(isNew ? "Solicitud creada en Google Sheets:" : "Solicitud guardada en Google Sheets:", copy.id);
+        return copy;
     }
 
-    // Guardamos el objeto completo para conservar historial, evidencias y campos adicionales.
-    const copy = JSON.parse(JSON.stringify(ticket));
     if (dbRef) {
         await dbPut(copy);
     } else {
         let all = [];
-        try {
-            all = JSON.parse(localStorage.getItem(FALLBACK_KEY) || "[]");
-        } catch {
-            all = [];
-        }
+        try { all = JSON.parse(localStorage.getItem(FALLBACK_KEY) || "[]"); } catch { all = []; }
         if (!Array.isArray(all)) all = [];
         const index = all.findIndex(item => String(item.id) === String(copy.id));
-        if (index >= 0) all[index] = copy;
-        else all.push(copy);
+        if (index >= 0) all[index] = copy; else all.push(copy);
         localStorage.setItem(FALLBACK_KEY, JSON.stringify(all));
     }
-
     console.log(isNew ? "Solicitud creada en almacenamiento local:" : "Solicitud guardada en almacenamiento local:", copy.id);
     return copy;
 }
@@ -1375,29 +1423,36 @@ async function reloadAndRender() {
 }
 
 async function initStorage() {
-    try {
-        dbRef = await openDB();
-    } catch (err) {
+    if (SITODEP_USA_GOOGLE_SHEETS) {
+        dbRef = null;
+        try {
+            await reloadTickets();
+            console.info("SITODEP conectado a Google Sheets. Tickets cargados:", tickets.length);
+        } catch (err) {
+            console.error("No se pudo conectar a Google Sheets:", err);
+            showCustomAlert("No se pudo conectar con la base compartida de Google Sheets. Verifica la URL /exec y que Apps Script esté implementado como aplicación web.\n\nDetalle: " + errMsg(err), "Error de conexión", "error");
+            throw err;
+        }
+        window.addEventListener("focus", reloadAndRender);
+        document.addEventListener("visibilitychange", () => { if (!document.hidden) reloadAndRender(); });
+        setInterval(reloadAndRender, 15000);
+        return;
+    }
+
+    try { dbRef = await openDB(); }
+    catch (err) {
         console.warn("IndexedDB no disponible, usando localStorage:", err);
         dbRef = null;
     }
-
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch {}
-
     try { await reloadTickets(); } catch (err) { console.error("No se pudieron cargar las solicitudes:", err); }
-
     try {
         channel = new BroadcastChannel("sitodep_tdm_channel");
         channel.onmessage = () => reloadAndRender();
     } catch {}
-
-    window.addEventListener("storage", e => {
-        if (e.key === FALLBACK_KEY) reloadAndRender();
-    });
+    window.addEventListener("storage", e => { if (e.key === FALLBACK_KEY) reloadAndRender(); });
     window.addEventListener("focus", reloadAndRender);
-    document.addEventListener("visibilitychange", () => {
-        if (!document.hidden) reloadAndRender();
-    });
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) reloadAndRender(); });
     setInterval(reloadAndRender, 10000);
 }
 
