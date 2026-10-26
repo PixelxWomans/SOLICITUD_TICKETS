@@ -1194,7 +1194,7 @@ async function checkPassword(userKey, pass) {
 // Si queda vacía, SITODEP seguirá usando el almacenamiento local del navegador.
 // NOTA: esta integración inicial es para pruebas; no usar datos confidenciales
 // hasta implementar autenticación y permisos verificados en el servidor.
-const SITODEP_GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyUI9U4nzxPLForXXXKWDEmHm5eRXG0yz2-B9InFKn85f0nsnqq3yv19cUq5I3js4cF/exec";
+const SITODEP_GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxG4wlwIwQvfXVxEekh2GXerae5JG7m6Yxg5v0zN50_P4DCnfzYuoRnjx1adBOhDu9C/exec";
 const SITODEP_USA_GOOGLE_SHEETS = SITODEP_GOOGLE_SCRIPT_URL.startsWith("https://script.google.com/macros/s/") && SITODEP_GOOGLE_SCRIPT_URL.includes("/exec");
 
 const OLD_STORAGE_KEY = "sitodep_tdm_requests_v9";     // versión anterior (localStorage)
