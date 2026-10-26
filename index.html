@@ -1,0 +1,3931 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SITODEP - Solicitudes y Tickets TDM</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .kanban-wrapper {
+            height: calc(100vh - 340px);
+            min-height: 420px;
+            overflow: hidden;
+        }
+        .kanban-grid {
+            height: 100%;
+            min-height: 0;
+        }
+        .kanban-column {
+            height: 100%;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        .kanban-col {
+            min-height: 60px;
+            flex: 1;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding-right: 4px;
+        }
+        .kanban-col::-webkit-scrollbar { width: 7px; }
+        .kanban-col::-webkit-scrollbar-track { background: transparent; }
+        .kanban-col::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 999px;
+        }
+        .kanban-col.drag-over {
+            background: rgba(99,102,241,.08);
+            outline: 2px dashed #818cf8;
+            outline-offset: -4px;
+            border-radius: 12px;
+        }
+        .request-row:hover { background: #f8fafc; }
+        /* Zona para arrastrar / pegar evidencias */
+        .evidence-dropzone {
+            border: 2px dashed #cbd5e1;
+            background: #f8fafc;
+            border-radius: 14px;
+            padding: 18px 12px;
+            text-align: center;
+            cursor: pointer;
+            transition: .15s ease;
+        }
+        .evidence-dropzone:hover { border-color: #818cf8; background: #eef2ff; }
+        .evidence-dropzone.drag-over { border-color: #6366f1; background: #e0e7ff; box-shadow: 0 0 0 3px rgba(99,102,241,.15); }
+        /* Tabla de solicitudes con alto fijo: el scroll es interno y el encabezado se queda arriba */
+        .requester-table-wrap {
+            height: calc(100vh - 480px);
+            min-height: 340px;
+            overflow: auto;
+        }
+        .requester-table-wrap thead th {
+            position: sticky;
+            top: 0;
+            z-index: 5;
+            background: #f8fafc;
+            box-shadow: 0 1px 0 #e2e8f0;
+        }
+        .modal-scroll { max-height: calc(100vh - 100px); overflow-y: auto; }
+        .dragging { opacity: .45; transform: rotate(1deg); }
+        .status-dot { width: 9px; height: 9px; border-radius: 999px; display: inline-block; }
+        .form-label {
+            display: block;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .06em;
+            color: #475569;
+            margin-bottom: 6px;
+        }
+        .form-input {
+            width: 100%;
+            padding: 10px 12px;
+            background: #f8fafc;
+            border: 1px solid #cbd5e1;
+            border-radius: 12px;
+            font-size: 13px;
+            outline: none;
+            transition: .15s ease;
+        }
+        .form-input:focus {
+            background: white;
+            border-color: #6366f1;
+            box-shadow: 0 0 0 3px rgba(99,102,241,.12);
+        }
+    </style>
+</head>
+
+<body class="bg-slate-50 font-sans text-slate-800">
+
+<!-- =========================================================
+     LOGIN
+========================================================= -->
+<div id="login-screen" class="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 p-4">
+    <div class="bg-white rounded-3xl shadow-2xl w-full max-w-md p-8 border border-white/20">
+        <div class="text-center mb-8">
+            <div class="inline-flex items-center justify-center w-16 h-16 bg-indigo-600 text-white rounded-2xl shadow-lg mb-4 text-2xl">
+                <i class="fa-solid fa-layer-group"></i>
+            </div>
+            <h1 class="text-2xl font-extrabold text-slate-900">SOLICITUD DE TICKETS · TDM</h1>
+            <p class="text-sm text-slate-500 mt-1">Sistema Interno de Gestión de Requerimientos</p>
+        </div>
+
+        <form id="login-form" onsubmit="handleLogin(event)" class="space-y-5">
+            <div>
+                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-2">Usuario</label>
+                <div class="relative">
+                    <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                        <i class="fa-solid fa-user"></i>
+                    </span>
+                    <input type="text" id="username" required
+                        placeholder="Ej. TDM.Nombre o CAC.Nombre"
+                        class="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white transition">
+                </div>
+            </div>
+
+            <div>
+                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-2">Contraseña</label>
+                <div class="relative">
+                    <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                        <i class="fa-solid fa-lock"></i>
+                    </span>
+                    <input type="password" id="password" required placeholder="••••••••••••"
+                        class="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white transition">
+                </div>
+            </div>
+
+            <button type="submit"
+                class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-xl shadow-md transition flex items-center justify-center gap-2">
+                <span>Iniciar Sesión</span>
+                <i class="fa-solid fa-arrow-right text-xs"></i>
+            </button>
+        </form>
+
+        <div class="mt-6 pt-6 border-t border-slate-100 text-xs text-slate-400 space-y-1">
+            <p class="font-medium text-slate-500 mb-2">Contraseña inicial: 1234567899 · puedes cambiarla al iniciar sesión</p>
+            <p>• <b>CAC.Nombre</b> — Crea y gestiona tickets / Panel operativo diario</p>
+            <p>• <b>TDM.Nombre</b> — Solicita tickets / Consulta global</p>
+        </div>
+    </div>
+</div>
+
+
+<!-- =========================================================
+     APP
+========================================================= -->
+<div id="app-screen" class="hidden min-h-screen flex flex-col">
+
+    <!-- HEADER -->
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-30 px-5 lg:px-8 py-4 shadow-sm">
+        <div class="flex items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-indigo-600 text-white rounded-xl flex items-center justify-center font-bold">
+                    <i class="fa-solid fa-layer-group"></i>
+                </div>
+                <div>
+                    <h2 class="font-bold text-slate-900 leading-tight">SITODEP · Panel Operativo TDM</h2>
+                    <p class="text-xs text-slate-500" id="user-role-badge">Rol</p>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <div class="text-right hidden sm:block">
+                    <p class="text-sm font-semibold text-slate-800" id="header-username">Usuario</p>
+                    <p class="text-xs text-emerald-600 font-medium">● En línea</p>
+                </div>
+                <button onclick="openPasswordModal()" title="Cambiar contraseña"
+                    class="p-2.5 text-slate-400 hover:text-indigo-600 rounded-xl hover:bg-slate-100 transition">
+                    <i class="fa-solid fa-key"></i>
+                </button>
+                <button onclick="logout()" title="Cerrar sesión"
+                    class="p-2.5 text-slate-400 hover:text-rose-600 rounded-xl hover:bg-slate-100 transition">
+                    <i class="fa-solid fa-right-from-bracket"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+
+    <!-- =====================================================
+         VIEW: MORALEJA / SOLICITANTE
+    ====================================================== -->
+    <main id="requester-view" class="hidden flex-1 p-5 lg:p-8">
+        <div class="max-w-7xl mx-auto">
+
+            <div class="bg-white rounded-2xl border border-slate-200 p-5 mb-6 shadow-sm">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div>
+                        <div class="flex items-center gap-2 mb-1">
+                            <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                            <span class="text-xs font-bold uppercase tracking-wider text-emerald-700">Vista de solicitudes</span>
+                        </div>
+                        <h1 class="text-xl font-bold text-slate-900">Solicitudes de requerimientos</h1>
+                        <p class="text-sm text-slate-500 mt-1">
+                            Consulta las solicitudes realizadas por tus compañeros para evitar duplicar un requerimiento.
+                        </p>
+                    </div>
+
+                    <button onclick="openRequestModal()"
+                        class="shrink-0 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-3 rounded-xl text-sm font-semibold shadow-sm flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-plus"></i>
+                        <span>Crear solicitud</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Resumen operativo -->
+            <div class="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+                <div class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+                    <p class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total solicitudes</p>
+                    <p id="requester-total" class="text-2xl font-extrabold text-slate-900 mt-1">0</p>
+                    <p class="text-[11px] text-slate-400 mt-1">Acumuladas</p>
+                </div>
+                <div class="bg-white rounded-2xl border border-amber-200 p-4 shadow-sm">
+                    <p class="text-[10px] font-bold uppercase tracking-wider text-amber-600">Pendientes</p>
+                    <p id="requester-pending" class="text-2xl font-extrabold text-amber-600 mt-1">0</p>
+                    <p class="text-[11px] text-slate-400 mt-1">Por gestionar</p>
+                </div>
+                <div class="bg-white rounded-2xl border border-blue-200 p-4 shadow-sm">
+                    <p class="text-[10px] font-bold uppercase tracking-wider text-blue-600">En proceso</p>
+                    <p id="requester-process" class="text-2xl font-extrabold text-blue-600 mt-1">0</p>
+                    <p class="text-[11px] text-slate-400 mt-1">En atención</p>
+                </div>
+                <div class="bg-white rounded-2xl border border-emerald-200 p-4 shadow-sm">
+                    <p class="text-[10px] font-bold uppercase tracking-wider text-emerald-600">Completadas</p>
+                    <p id="requester-completed" class="text-2xl font-extrabold text-emerald-600 mt-1">0</p>
+                    <p class="text-[11px] text-slate-400 mt-1">Finalizadas</p>
+                </div>
+                <div class="bg-white rounded-2xl border border-rose-200 p-4 shadow-sm col-span-2 lg:col-span-1">
+                    <p class="text-[10px] font-bold uppercase tracking-wider text-rose-600">Canceladas</p>
+                    <p id="requester-canceled" class="text-2xl font-extrabold text-rose-600 mt-1">0</p>
+                    <p class="text-[11px] text-slate-400 mt-1">Anuladas</p>
+                </div>
+            </div>
+
+            <!-- BARRA DE BÚSQUEDA Y FILTROS -->
+            <div class="bg-white rounded-2xl border border-slate-200 p-4 mb-6 shadow-sm flex flex-col md:flex-row gap-3 items-center justify-between">
+                <div class="flex flex-1 flex-col sm:flex-row gap-3 w-full flex-wrap">
+                    <div class="relative flex-1 min-w-[200px]">
+                        <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                            <i class="fa-solid fa-magnifying-glass text-xs"></i>
+                        </span>
+                        <input type="text" id="filter-search" oninput="renderRequesterView()" placeholder="Buscar por cliente, tipo, acción o ticket..." class="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500">
+                    </div>
+
+                    <div class="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5">
+                        <i class="fa-regular fa-calendar text-indigo-600 text-xs"></i>
+                        <input type="date" id="filter-date" onchange="renderRequesterView()" class="bg-transparent text-xs text-slate-700 outline-none font-medium">
+                        <button onclick="clearDateFilter('requester')" title="Limpiar fecha" class="text-slate-400 hover:text-rose-500 text-xs pl-1">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+
+                    <select id="filter-status" onchange="renderRequesterView()" class="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs outline-none focus:border-indigo-500">
+                        <option value="todos">Todos los estatus</option>
+                        <option value="pendiente">Pendientes</option>
+                        <option value="proceso">En proceso</option>
+                        <option value="completada">Completadas</option>
+                        <option value="cancelada">Canceladas</option>
+                    </select>
+                </div>
+                <div class="flex items-center gap-2 w-full md:w-auto justify-end shrink-0">
+                    <button id="btn-filter-mine" onclick="toggleFilterMine()" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-user text-indigo-600"></i>
+                        <span id="lbl-filter-mine">Ver solo mis solicitudes</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Lista general -->
+            <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div class="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+                    <div>
+                        <h2 class="font-bold text-slate-900">Todas las solicitudes</h2>
+                        <p class="text-xs text-slate-500 mt-0.5">Puedes abrir cualquier solicitud para consultar sus detalles completos.</p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <button type="button" onclick="exportRequesterBD()" title="Descarga en Excel las solicitudes que estás viendo (respeta los filtros aplicados)" class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-2">
+                            <i class="fa-solid fa-file-excel"></i><span>Descargar BD</span>
+                        </button>
+                        <i class="fa-solid fa-list-check text-slate-300 hidden sm:inline"></i>
+                    </div>
+                </div>
+
+                <div class="requester-table-wrap">
+                    <table class="w-full min-w-[1100px]">
+                        <thead class="bg-slate-50 border-b border-slate-200">
+                            <tr class="text-left">
+                                <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Solicitud</th>
+                                <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Prioridad</th>
+                                <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Tipo</th>
+                                <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Cliente</th>
+                                <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Solicitado por</th>
+                                <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Fecha / hora</th>
+                                <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Estatus</th>
+                                <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Atendido por (CAC)</th>
+                                <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">No. Ticket</th>
+                                <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500 text-right">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="requester-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </main>
+
+
+    <!-- =====================================================
+         VIEW: KAROLIN / GESTORA
+    ====================================================== -->
+    <main id="manager-view" class="hidden flex-1 p-5 lg:p-8">
+        <div class="max-w-[1600px] mx-auto">
+
+            <div class="bg-indigo-50 border border-indigo-200 rounded-2xl p-5 mb-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div class="flex items-start gap-3">
+                    <div class="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0">
+                        <i class="fa-solid fa-shield-halved"></i>
+                    </div>
+                    <div>
+                        <p class="font-bold text-sm text-indigo-950">Panel Operativo de Creadora y Gestión</p>
+                        <p class="text-xs text-indigo-700 mt-0.5">
+                            Arrastra las tarjetas entre columnas (o usa los botones de la tarjeta). Las completadas de días anteriores pasan al histórico.
+                        </p>
+                    </div>
+                </div>
+
+                <button onclick="openHistoryModal()" class="shrink-0 bg-slate-900 hover:bg-slate-800 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2">
+                    <i class="fa-solid fa-box-archive text-amber-400"></i>
+                    <span>Ver Histórico de Completadas</span>
+                </button>
+            </div>
+
+            <div class="bg-white rounded-2xl border border-slate-200 p-4 mb-5 shadow-sm flex flex-col sm:flex-row gap-3 items-center justify-between">
+                <div class="flex items-center gap-3 w-full sm:w-auto">
+                    <span class="text-xs font-bold text-slate-500 uppercase tracking-wider">Filtrar tablero por día:</span>
+                    <div class="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5">
+                        <i class="fa-regular fa-calendar text-indigo-600 text-xs"></i>
+                        <input type="date" id="manager-filter-date" onchange="renderKanban()" class="bg-transparent text-xs text-slate-700 outline-none font-semibold">
+                        <button onclick="clearDateFilter('manager')" title="Mostrar acumulado activo" class="text-slate-400 hover:text-rose-500 text-xs pl-1">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <p id="manager-date-badge" class="text-xs font-semibold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-100">
+                    Mostrando jornada activa de hoy
+                </p>
+            </div>
+
+            <div class="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-5">
+                <div class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+                    <p class="text-[10px] font-bold uppercase tracking-wider text-slate-400">En pantalla</p>
+                    <p id="manager-total" class="text-2xl font-extrabold text-slate-900 mt-1">0</p>
+                    <p class="text-[11px] text-slate-400 mt-1">Órdenes activas</p>
+                </div>
+                <div class="bg-white rounded-2xl border border-amber-200 p-4 shadow-sm">
+                    <p class="text-[10px] font-bold uppercase tracking-wider text-amber-600">Pendientes</p>
+                    <p id="manager-pending" class="text-2xl font-extrabold text-amber-600 mt-1">0</p>
+                    <p class="text-[11px] text-slate-400 mt-1">Esperando gestión</p>
+                </div>
+                <div class="bg-white rounded-2xl border border-blue-200 p-4 shadow-sm">
+                    <p class="text-[10px] font-bold uppercase tracking-wider text-blue-600">En proceso</p>
+                    <p id="manager-process" class="text-2xl font-extrabold text-blue-600 mt-1">0</p>
+                    <p class="text-[11px] text-slate-400 mt-1">Actualmente atendiendo</p>
+                </div>
+                <div class="bg-white rounded-2xl border border-emerald-200 p-4 shadow-sm">
+                    <p class="text-[10px] font-bold uppercase tracking-wider text-emerald-600">Completadas hoy</p>
+                    <p id="manager-completed" class="text-2xl font-extrabold text-emerald-600 mt-1">0</p>
+                    <p class="text-[11px] text-slate-400 mt-1">Finalizadas de la fecha</p>
+                </div>
+                <div class="bg-white rounded-2xl border border-rose-200 p-4 shadow-sm col-span-2 lg:col-span-1">
+                    <p class="text-[10px] font-bold uppercase tracking-wider text-rose-600">Canceladas</p>
+                    <p id="manager-canceled" class="text-2xl font-extrabold text-rose-600 mt-1">0</p>
+                    <p class="text-[11px] text-slate-400 mt-1">Anuladas</p>
+                </div>
+            </div>
+
+            <div class="kanban-wrapper">
+                <div class="kanban-grid grid grid-cols-1 md:grid-cols-4 gap-4">
+
+                <section class="kanban-column bg-slate-100 rounded-2xl p-4 border border-slate-200">
+                    <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-200">
+                        <div class="flex items-center gap-2">
+                            <span class="status-dot bg-amber-500"></span>
+                            <h3 class="font-bold text-sm text-slate-700">Pendiente</h3>
+                        </div>
+                        <span id="count-pendiente" class="bg-white text-slate-700 text-xs px-2.5 py-1 rounded-full font-bold shadow-sm">0</span>
+                    </div>
+                    <div id="col-pendiente" class="kanban-col space-y-3" ondragenter="dragEnter(event)" ondragover="allowDrop(event)" ondragleave="dragLeave(event)" ondrop="drop(event, 'pendiente')"></div>
+                </section>
+
+                <section class="kanban-column bg-slate-100 rounded-2xl p-4 border border-slate-200">
+                    <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-200">
+                        <div class="flex items-center gap-2">
+                            <span class="status-dot bg-blue-500"></span>
+                            <h3 class="font-bold text-sm text-slate-700">En proceso</h3>
+                        </div>
+                        <span id="count-proceso" class="bg-white text-slate-700 text-xs px-2.5 py-1 rounded-full font-bold shadow-sm">0</span>
+                    </div>
+                    <div id="col-proceso" class="kanban-col space-y-3" ondragenter="dragEnter(event)" ondragover="allowDrop(event)" ondragleave="dragLeave(event)" ondrop="drop(event, 'proceso')"></div>
+                </section>
+
+                <section class="kanban-column bg-slate-100 rounded-2xl p-4 border border-slate-200">
+                    <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-200">
+                        <div class="flex items-center gap-2">
+                            <span class="status-dot bg-emerald-500"></span>
+                            <h3 class="font-bold text-sm text-slate-700">Completada (Hoy)</h3>
+                        </div>
+                        <span id="count-completada" class="bg-white text-slate-700 text-xs px-2.5 py-1 rounded-full font-bold shadow-sm">0</span>
+                    </div>
+                    <div id="col-completada" class="kanban-col space-y-3" ondragenter="dragEnter(event)" ondragover="allowDrop(event)" ondragleave="dragLeave(event)" ondrop="drop(event, 'completada')"></div>
+                </section>
+
+                <section class="kanban-column bg-slate-100 rounded-2xl p-4 border border-slate-200 opacity-90">
+                    <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-200">
+                        <div class="flex items-center gap-2">
+                            <span class="status-dot bg-rose-500"></span>
+                            <h3 class="font-bold text-sm text-slate-700">Cancelada</h3>
+                        </div>
+                        <span id="count-cancelada" class="bg-white text-slate-700 text-xs px-2.5 py-1 rounded-full font-bold shadow-sm">0</span>
+                    </div>
+                    <div id="col-cancelada" class="kanban-col space-y-3" ondragenter="dragEnter(event)" ondragover="allowDrop(event)" ondragleave="dragLeave(event)" ondrop="drop(event, 'cancelada')"></div>
+                </section>
+
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <main id="admin-view" class="hidden flex-1 p-5 lg:p-8">
+      <div class="max-w-[1600px] mx-auto w-full">
+        <div class="bg-white border border-slate-200 rounded-2xl p-4 mb-6 shadow-sm flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div><p class="text-xs uppercase tracking-wider font-bold text-indigo-600">Control administrativo</p><h1 class="text-xl font-extrabold text-slate-900">Panel de Administración SITODEP</h1><p class="text-sm text-slate-500">Acceso completo a CAC, TDM y métricas por usuario.</p></div>
+          <div class="flex flex-wrap gap-2">
+            <button onclick="adminNavigate('metrics')" class="px-4 py-2 rounded-xl text-sm font-bold bg-indigo-600 text-white">Métricas</button>
+            <button onclick="adminNavigate('cac')" class="px-4 py-2 rounded-xl text-sm font-bold bg-slate-100 text-slate-700">Panel CAC</button>
+            <button onclick="adminNavigate('tdm')" class="px-4 py-2 rounded-xl text-sm font-bold bg-slate-100 text-slate-700">Panel TDM</button>
+          </div>
+        </div>
+        <section id="admin-metrics-panel" class="space-y-6">
+          <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+            <div class="bg-white border rounded-2xl p-5"><p class="text-xs uppercase font-bold text-slate-500">Total solicitudes</p><p id="admin-total" class="text-3xl font-extrabold mt-2">0</p></div>
+            <div class="bg-white border rounded-2xl p-5"><p class="text-xs uppercase font-bold text-blue-600">En proceso</p><p id="admin-process" class="text-3xl font-extrabold mt-2 text-blue-600">0</p></div>
+            <div class="bg-white border rounded-2xl p-5"><p class="text-xs uppercase font-bold text-emerald-600">Completadas</p><p id="admin-completed" class="text-3xl font-extrabold mt-2 text-emerald-600">0</p></div>
+            <div class="bg-white border rounded-2xl p-5"><p class="text-xs uppercase font-bold text-rose-600">Canceladas</p><p id="admin-canceled" class="text-3xl font-extrabold mt-2 text-rose-600">0</p></div>
+          </div>
+          <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <div class="bg-white border rounded-2xl p-5 shadow-sm"><h2 class="font-bold mb-1">Actividad por usuario CAC</h2><p class="text-xs text-slate-500 mb-4">Tickets tomados, completados y cancelados por usuario.</p><div class="overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-left text-xs uppercase text-slate-500 border-b"><th class="py-3 pr-3">Usuario CAC</th><th class="py-3 px-2">Tomados</th><th class="py-3 px-2">Tickets generados</th><th class="py-3 px-2">Cancelados</th></tr></thead><tbody id="admin-cac-metrics"></tbody></table></div></div>
+            <div class="bg-white border rounded-2xl p-5 shadow-sm"><h2 class="font-bold mb-1">Solicitudes por usuario TDM</h2><p class="text-xs text-slate-500 mb-4">Solicitudes registradas por solicitante.</p><div class="overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-left text-xs uppercase text-slate-500 border-b"><th class="py-3 pr-3">Usuario TDM</th><th class="py-3 px-2">Solicitudes</th><th class="py-3 px-2">Pendientes</th><th class="py-3 px-2">Completadas</th></tr></thead><tbody id="admin-tdm-metrics"></tbody></table></div></div>
+          </div>
+        </section>
+      </div>
+    </main>
+</div>
+
+
+<!-- =========================================================
+     MODAL: HISTÓRICO
+========================================================= -->
+<div id="history-modal" class="fixed inset-0 bg-slate-950/55 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+    <div class="bg-white rounded-3xl shadow-2xl w-full max-w-5xl modal-scroll border border-slate-100">
+        <div class="px-6 py-5 border-b border-slate-100 flex items-center justify-between sticky top-0 bg-white z-10">
+            <div>
+                <p class="text-[11px] font-bold uppercase tracking-wider text-emerald-600">Módulo de Archivo</p>
+                <h3 class="font-bold text-xl text-slate-900">Histórico de Tickets Completados</h3>
+            </div>
+            <button onclick="closeHistoryModal()" class="w-9 h-9 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+
+        <div class="p-6">
+            <div class="mb-4 flex flex-col sm:flex-row gap-3">
+                <input type="text" id="history-search" oninput="renderHistoryView()" placeholder="Buscar en el histórico..." class="flex-1 px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500">
+                <input type="date" id="history-date" onchange="renderHistoryView()" class="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs outline-none">
+                <button type="button" onclick="exportHistoryBD()" title="Descarga en Excel el histórico que estás viendo (respeta búsqueda y fecha)" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 shrink-0">
+                    <i class="fa-solid fa-file-excel"></i><span>Descargar BD</span>
+                </button>
+            </div>
+
+            <div class="overflow-x-auto border border-slate-200 rounded-2xl">
+                <table class="w-full min-w-[800px]">
+                    <thead class="bg-slate-50 border-b border-slate-200 text-left text-[11px] font-bold uppercase text-slate-500">
+                        <tr>
+                            <th class="px-4 py-3">ID / Fecha</th>
+                            <th class="px-4 py-3">Tipo</th>
+                            <th class="px-4 py-3">Cliente</th>
+                            <th class="px-4 py-3">Solicitante</th>
+                            <th class="px-4 py-3">Movido por</th>
+                            <th class="px-4 py-3">Completado por</th>
+                            <th class="px-4 py-3">No. Ticket</th>
+                            <th class="px-4 py-3 text-right">Ver</th>
+                        </tr>
+                    </thead>
+                    <tbody id="history-table-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<!-- =========================================================
+     MODAL: CREAR SOLICITUD
+========================================================= -->
+<div id="request-modal" class="fixed inset-0 bg-slate-950/55 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+    <div class="bg-white rounded-3xl shadow-2xl w-full max-w-3xl modal-scroll">
+        <div class="sticky top-0 bg-white z-10 px-6 py-5 border-b border-slate-100 flex items-center justify-between rounded-t-3xl">
+            <div>
+                <p id="request-modal-kicker" class="text-[11px] font-bold uppercase tracking-wider text-indigo-600">Nueva solicitud</p>
+                <h3 class="font-bold text-xl text-slate-900" id="modal-step-title">Paso 1: Tipo de Solicitud</h3>
+                <p class="text-xs text-slate-500 mt-1" id="modal-step-subtitle">Selecciona el tipo de orden para continuar con los datos requeridos.</p>
+            </div>
+            <button onclick="closeRequestModal()" class="w-9 h-9 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+
+        <!-- PASO 1 -->
+        <div id="step-1-container" class="p-6 space-y-6">
+            <div>
+                <label class="form-label">Selecciona el Tipo de Orden / Solicitud *</label>
+                <select id="step1-tipo-orden" class="form-input text-base py-3">
+                    <option value="">-- Seleccionar tipo de solicitud --</option>
+                    <option value="SUPERVISIÓN TÉCNICA">1. SUPERVISIÓN TÉCNICA</option>
+                    <option value="REPARACIÓN DE EQUIPO">2. REPARACIÓN DE EQUIPO</option>
+                    <option value="DIAGNÓSTICO EXTERNO CLIENTE">3. DIAGNÓSTICO EXTERNO CLIENTE</option>
+                    <option value="RETIRO DE EQUIPO">4. RETIRO DE EQUIPO</option>
+                    <option value="DEVOLUCIÓN DE EQUIPO">5. DEVOLUCIÓN DE EQUIPO</option>
+                    <option value="LEVANTAMIENTO">6. LEVANTAMIENTO</option>
+                    <option value="ENVÍO AL INTERIOR">7. ENVÍO AL INTERIOR</option>
+                    <option value="ENVÍO AL INTERIOR DEL PAÍS">8. ENVÍO AL INTERIOR DEL PAÍS</option>
+                    <option value="NUEVA INSTALACIÓN">9. NUEVA INSTALACIÓN</option>
+                    <option value="CAMBIO DE EQUIPO">10. CAMBIO DE EQUIPO</option>
+                    <option value="SOPORTE TÉCNICO">11. SOPORTE TÉCNICO</option>
+                    <option value="SOPORTE REMOTO">12. SOPORTE REMOTO</option>
+                    <option value="MANTENIMIENTO">13. MANTENIMIENTO</option>
+                    <option value="MENSAJERÍA">14. MENSAJERÍA</option>
+                    <option value="VENTA DIRECTA">15. VENTA DIRECTA</option>
+                </select>
+            </div>
+
+            <div class="pt-4 border-t border-slate-100 flex justify-end gap-3">
+                <button type="button" onclick="closeRequestModal()" class="px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">
+                    Cancelar
+                </button>
+                <button type="button" onclick="goToStep2()" class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold shadow-sm flex items-center gap-2">
+                    <span>Siguiente</span>
+                    <i class="fa-solid fa-arrow-right text-xs"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- PASO 2 -->
+        <form id="request-form" onsubmit="handleCreateRequest(event)" class="p-6 space-y-5 hidden">
+
+            <div class="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 flex items-center justify-between">
+                <div>
+                    <span class="text-[10px] font-bold uppercase tracking-wider text-indigo-500">Tipo Seleccionado</span>
+                    <h4 class="font-extrabold text-indigo-900" id="display-selected-type">—</h4>
+                </div>
+                <button type="button" onclick="backToStep1()" class="text-xs font-bold text-indigo-600 hover:underline">
+                    <i class="fa-solid fa-pen mr-1"></i>Cambiar
+                </button>
+            </div>
+
+            <div class="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-4">
+                <h4 class="text-xs font-bold uppercase tracking-wider text-slate-600 border-b border-slate-200 pb-2">
+                    Acción y Equipos
+                </h4>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="md:col-span-2">
+                        <label class="form-label">Tipo de Acción a Realizar *</label>
+                        <input id="f-accion" required class="form-input" placeholder="Ej. Instalación de driver, revisión física, cambio de tóner...">
+                    </div>
+
+                    <div id="grp-modelo-actual" class="hidden">
+                        <label class="form-label">Modelo Actual / A Retirar</label>
+                        <input id="f-modelo-actual" class="form-input" placeholder="Modelo del equipo actual">
+                    </div>
+                    <div id="grp-serial-actual" class="hidden">
+                        <label class="form-label">Serial del Equipo Actual</label>
+                        <input id="f-serial-actual" class="form-input" placeholder="Serial del equipo actual">
+                    </div>
+
+                    <div id="grp-modelo-nuevo">
+                        <label class="form-label" id="lbl-modelo-nuevo">Modelo del Equipo</label>
+                        <input id="f-modelo" class="form-input" placeholder="Modelo del equipo">
+                    </div>
+                    <div id="grp-serial-nuevo">
+                        <label class="form-label" id="lbl-serial-nuevo">Serial del Equipo</label>
+                        <input id="f-serial" class="form-input" placeholder="Serial del equipo">
+                    </div>
+                </div>
+            </div>
+
+            <div id="sec-campos-estandar" class="space-y-4">
+                <h4 class="text-xs font-bold uppercase tracking-wider text-slate-600 border-b border-slate-200 pb-2">
+                    Datos del Cliente / Sucursal
+                </h4>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="form-label">Cliente *</label>
+                        <input id="f-cliente" required class="form-input" placeholder="Nombre de la empresa / cliente">
+                    </div>
+                    <!-- SUCURSAL: obligatoria en TODOS los tipos de requerimiento -->
+                    <div>
+                        <label class="form-label">Sucursal *</label>
+                        <input id="f-sucursal" required class="form-input" placeholder="Sucursal donde se realiza el servicio">
+                    </div>
+                    <div>
+                        <label class="form-label">Prioridad *</label>
+                        <select id="f-prioridad" required class="form-input">
+                            <option value="Normal">Normal</option>
+                            <option value="Urgente">Urgente</option>
+                            <option value="INMEDIATO">INMEDIATO</option>
+                        </select>
+                    </div>
+                    <div id="grp-recibe">
+                        <label class="form-label">¿Quién Recibe en Sucursal?</label>
+                        <input id="f-recibe" class="form-input" placeholder="Persona autorizada que recibe">
+                    </div>
+                    <div>
+                        <label class="form-label">Teléfono de Contacto *</label>
+                        <input id="f-contacto" required class="form-input" placeholder="Teléfono de contacto">
+                    </div>
+                    <div id="grp-fecha-recepcion" class="hidden">
+                        <label class="form-label">Fecha de Recepción</label>
+                        <input type="date" id="f-fecha-recepcion" class="form-input">
+                    </div>
+                    <div id="grp-reporta">
+                        <label class="form-label">Usuario que Reporta *</label>
+                        <input id="f-reporta" required class="form-input bg-slate-100" placeholder="Nombre de quien reporta">
+                    </div>
+                </div>
+            </div>
+
+            <div id="sec-campos-especificos" class="space-y-4">
+                <h4 class="text-xs font-bold uppercase tracking-wider text-slate-600 border-b border-slate-200 pb-2">
+                    Detalles Específicos de la Solicitud
+                </h4>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+                    <div id="grp-facturacion" class="hidden">
+                        <label class="form-label">Tipo de Facturación</label>
+                        <select id="f-facturacion" class="form-input">
+                            <option value="">Seleccionar...</option>
+                            <option>Crédito</option>
+                            <option>Contado</option>
+                            <option>Sin Costo / Garantía</option>
+                            <option>Contrato Renta</option>
+                        </select>
+                    </div>
+
+                    <div id="grp-tipo-mantenimiento" class="hidden">
+                        <label class="form-label">Tipo de Mantenimiento</label>
+                        <select id="f-tipo-mantenimiento" class="form-input">
+                            <option value="">Seleccionar...</option>
+                            <option>Preventivo</option>
+                            <option>Correctivo</option>
+                        </select>
+                    </div>
+
+                    <div id="grp-usuarios-afectados" class="hidden">
+                        <label class="form-label">Usuarios Afectados</label>
+                        <input id="f-usuarios-afectados" type="number" min="1" class="form-input" placeholder="Ej. 3">
+                    </div>
+
+                    <div id="grp-tipo-escaneo" class="hidden">
+                        <label class="form-label">Tipo de Escaneo</label>
+                        <select id="f-escaneo" class="form-input">
+                            <option value="">Seleccionar...</option>
+                            <option>Carpeta de red (SMB)</option>
+                            <option>Correo electrónico (Email)</option>
+                            <option>USB</option>
+                            <option>FTP / Servidor</option>
+                            <option>No aplica</option>
+                        </select>
+                    </div>
+
+                    <div id="grp-cantidad-usuarios" class="hidden">
+                        <label class="form-label">Cantidad de Usuarios</label>
+                        <input id="f-cantidad-usuarios" type="number" min="1" class="form-input" placeholder="Ej. 10">
+                    </div>
+
+                    <div id="grp-conectividad" class="hidden">
+                        <label class="form-label">Tipo de Conectividad</label>
+                        <select id="f-conectividad" class="form-input">
+                            <option value="">Seleccionar...</option>
+                            <option>Red Cableada</option>
+                            <option>Wi-Fi</option>
+                            <option>USB</option>
+                            <option>Red + Wi-Fi</option>
+                        </select>
+                    </div>
+
+                    <div id="grp-incluye-instalacion" class="hidden">
+                        <label class="form-label">¿Incluye Instalación?</label>
+                        <select id="f-incluye-instalacion" class="form-input">
+                            <option value="">Seleccionar...</option>
+                            <option>Sí</option>
+                            <option>No</option>
+                        </select>
+                    </div>
+
+                    <div id="grp-departamento" class="hidden">
+                        <label class="form-label">Departamento</label>
+                        <input id="f-departamento" class="form-input" placeholder="Ej. Contabilidad, Recepción...">
+                    </div>
+
+                    <div id="grp-ultima-reparacion" class="hidden">
+                        <label class="form-label">Fecha Última Reparación</label>
+                        <input type="date" id="f-ultima-reparacion" class="form-input">
+                    </div>
+
+                    <div id="grp-delivery" class="hidden md:col-span-2">
+                        <div class="flex items-center gap-2 pt-2">
+                            <input type="checkbox" id="f-delivery" class="w-4 h-4 text-indigo-600 rounded">
+                            <label for="f-delivery" class="text-sm font-semibold text-slate-700">Incluir servicio de delivery</label>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <div class="space-y-4 pt-2">
+                <div>
+                    <label class="form-label">Notas / Observaciones Adicionales</label>
+                    <textarea id="f-notas" rows="3" class="form-input" placeholder="Añade detalles, especificaciones o requerimientos del cliente..."></textarea>
+                </div>
+
+                <div>
+                    <label class="form-label">Adjuntar Fotos / PDF / Evidencias (Múltiples)</label>
+                    <div id="evidence-dropzone" class="evidence-dropzone" tabindex="0" role="button" onclick="document.getElementById('f-evidencias').click()">
+                        <i class="fa-solid fa-cloud-arrow-up text-2xl text-indigo-500"></i>
+                        <p class="text-sm font-semibold text-slate-700 mt-1">Arrastra aquí tus archivos, <span class="text-indigo-600 underline">selecciónalos</span> o pega con <b>Ctrl+V</b></p>
+                        <p class="text-[11px] text-slate-400 mt-1">Imágenes (capturas, fotos) y PDF · máx. 10 archivos · PDF hasta 5 MB cada uno</p>
+                        <input id="f-evidencias" type="file" accept="image/*,application/pdf,.pdf" multiple class="hidden" onclick="event.stopPropagation()">
+                    </div>
+                    <div id="pending-evidencias-box" class="hidden mt-3">
+                        <p class="text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-2">Archivos por adjuntar</p>
+                        <div id="pending-evidencias-list" class="grid grid-cols-2 sm:grid-cols-3 gap-3"></div>
+                    </div>
+                    <div id="edit-evidencias-box" class="hidden mt-3">
+                        <p class="text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-2">Evidencias ya cargadas (quita las que no quieras conservar)</p>
+                        <div id="edit-evidencias-list" class="grid grid-cols-2 sm:grid-cols-3 gap-3"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pt-4 border-t border-slate-100 flex justify-between gap-3">
+                <button type="button" onclick="backToStep1()"
+                    class="px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">
+                    <i class="fa-solid fa-arrow-left mr-1"></i> Atrás
+                </button>
+                <div class="flex gap-2">
+                    <button type="button" onclick="closeRequestModal()"
+                        class="px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">
+                        Cancelar
+                    </button>
+                    <button id="btn-submit-request" type="submit"
+                        class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold shadow-sm flex items-center gap-2">
+                        <span>Registrar solicitud</span>
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+
+<!-- =========================================================
+     MODAL: CANCELAR
+========================================================= -->
+<div id="cancel-modal" class="fixed inset-0 bg-slate-950/55 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+    <div class="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 border border-slate-100">
+        <div class="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mb-4 text-xl">
+            <i class="fa-solid fa-ban"></i>
+        </div>
+        <h3 class="text-lg font-bold text-slate-900">Cancelar Solicitud</h3>
+        <p class="text-sm text-slate-500 mt-1 mb-4">
+            Por favor indica el motivo por el cual deseas anular o cancelar este requerimiento.
+        </p>
+
+        <div>
+            <label class="form-label">Motivo de Cancelación *</label>
+            <textarea id="cancel-reason" rows="3" required class="form-input" placeholder="Escribe la razón aquí..."></textarea>
+        </div>
+
+        <div class="mt-6 flex justify-end gap-3">
+            <button onclick="closeCancelModal()" class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-sm rounded-xl transition">
+                Volver
+            </button>
+            <button onclick="confirmCancelRequest()" class="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-sm rounded-xl transition shadow-sm">
+                Confirmar Cancelación
+            </button>
+        </div>
+    </div>
+</div>
+
+
+<!-- =========================================================
+     MODAL: DETALLE
+========================================================= -->
+<div id="detail-modal" class="fixed inset-0 bg-slate-950/55 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+    <div class="bg-white rounded-3xl shadow-2xl w-full max-w-3xl modal-scroll">
+        <div class="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
+            <div>
+                <p id="detail-kicker" class="text-[11px] font-bold uppercase tracking-wider text-indigo-600">Solicitud</p>
+                <h3 id="detail-title" class="font-bold text-xl text-slate-900">Detalle</h3>
+            </div>
+            <button onclick="closeDetailModal()" class="w-9 h-9 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+        <div id="detail-body" class="p-6"></div>
+    </div>
+</div>
+
+
+<!-- =========================================================
+     VISOR DE EVIDENCIAS (LIGHTBOX) - SE ABRE DENTRO DEL SISTEMA
+========================================================= -->
+<div id="lightbox-modal" class="fixed inset-0 bg-slate-950/90 hidden items-center justify-center z-[70] p-4" onclick="closeLightbox()">
+    <div class="w-full max-w-5xl flex flex-col max-h-full" onclick="event.stopPropagation()">
+        <div class="flex items-center justify-between text-white mb-3 gap-3">
+            <div class="min-w-0">
+                <p id="lb-name" class="font-semibold text-sm truncate">Evidencia</p>
+                <p id="lb-counter" class="text-xs text-slate-300">1 / 1</p>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+                <button onclick="downloadCurrentEvidence()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 rounded-xl text-xs font-bold flex items-center gap-2">
+                    <i class="fa-solid fa-download"></i><span>Descargar</span>
+                </button>
+                <button onclick="closeLightbox()" class="w-9 h-9 rounded-xl bg-white/10 hover:bg-white/20">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+        </div>
+
+        <div class="relative flex items-center justify-center min-h-0">
+            <button id="lb-prev" onclick="lightboxStep(-1)" class="absolute left-0 z-10 w-10 h-10 rounded-full bg-white/15 hover:bg-white/30 text-white">
+                <i class="fa-solid fa-chevron-left"></i>
+            </button>
+            <img id="lb-img" src="" alt="Evidencia" class="max-h-[75vh] max-w-full object-contain rounded-xl bg-white/5">
+            <div id="lb-pdf-box" class="hidden w-full flex-col gap-2 px-12" style="height:78vh">
+                <iframe id="lb-pdf" title="Vista del PDF" class="w-full flex-1 rounded-xl bg-white" style="min-height:0;border:0"></iframe>
+                <p class="text-center text-[11px] text-slate-300">
+                    ¿No se ve el PDF en tu dispositivo?
+                    <button type="button" onclick="openCurrentEvidenceInTab()" class="underline font-bold text-white">Abrir en pestaña nueva</button>
+                    o
+                    <button type="button" onclick="downloadCurrentEvidence()" class="underline font-bold text-white">descargarlo</button>
+                </p>
+            </div>
+            <button id="lb-next" onclick="lightboxStep(1)" class="absolute right-0 z-10 w-10 h-10 rounded-full bg-white/15 hover:bg-white/30 text-white">
+                <i class="fa-solid fa-chevron-right"></i>
+            </button>
+        </div>
+    </div>
+</div>
+
+
+<!-- =========================================================
+     MODAL: COMPLETAR
+========================================================= -->
+<div id="complete-modal" class="fixed inset-0 bg-slate-950/55 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+    <div class="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6">
+        <div class="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center mb-4">
+            <i class="fa-solid fa-check"></i>
+        </div>
+        <h3 class="text-xl font-bold text-slate-900">Marcar como completada</h3>
+        <p class="text-sm text-slate-500 mt-1 mb-5">
+            Antes de completar esta solicitud, registra el número de ticket/orden generado.
+        </p>
+
+        <input id="completion-ticket-number" class="form-input" placeholder="Ej. TDM-2026-00125" required>
+
+        <div class="flex justify-end gap-3 mt-5">
+            <button onclick="closeCompleteModal()" class="px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">
+                Cancelar
+            </button>
+            <button onclick="confirmComplete()" class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold">
+                Confirmar
+            </button>
+        </div>
+    </div>
+</div>
+
+
+<!-- =========================================================
+     MODAL: CAMBIAR CONTRASEÑA
+========================================================= -->
+<div id="password-modal" class="fixed inset-0 bg-slate-950/55 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+    <form onsubmit="handleChangePassword(event)" class="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6">
+        <div class="w-12 h-12 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center mb-4">
+            <i class="fa-solid fa-key"></i>
+        </div>
+        <h3 class="text-xl font-bold text-slate-900">Cambiar contraseña</h3>
+        <p class="text-sm text-slate-500 mt-1 mb-5">Usuario: <b id="pw-username"></b></p>
+
+        <div class="space-y-4">
+            <div>
+                <label class="form-label">Contraseña actual</label>
+                <input type="password" id="pw-current" class="form-input" required autocomplete="current-password">
+            </div>
+            <div>
+                <label class="form-label">Nueva contraseña (mínimo 6 caracteres)</label>
+                <input type="password" id="pw-new" class="form-input" required autocomplete="new-password">
+            </div>
+            <div>
+                <label class="form-label">Confirmar nueva contraseña</label>
+                <input type="password" id="pw-confirm" class="form-input" required autocomplete="new-password">
+            </div>
+        </div>
+
+        <div class="flex justify-end gap-3 mt-6">
+            <button type="button" onclick="closePasswordModal()" class="px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">
+                Cancelar
+            </button>
+            <button type="submit" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold">
+                Guardar contraseña
+            </button>
+        </div>
+    </form>
+</div>
+
+
+<!-- =========================================================
+     MODALES ESTILIZADOS
+========================================================= -->
+<div id="custom-alert-modal" class="fixed inset-0 bg-slate-950/55 backdrop-blur-sm hidden items-center justify-center z-[80] p-4">
+    <div class="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 border border-slate-100">
+        <div id="custom-alert-icon" class="w-12 h-12 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center mb-4 text-xl">
+            <i class="fa-solid fa-circle-info"></i>
+        </div>
+        <h3 id="custom-alert-title" class="text-lg font-bold text-slate-900">Notificación</h3>
+        <p id="custom-alert-message" class="text-sm text-slate-600 mt-2 whitespace-pre-line"></p>
+        <div class="mt-6 flex justify-end">
+            <button id="custom-alert-btn" onclick="closeCustomAlert()" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-xl transition shadow-sm">
+                Entendido
+            </button>
+        </div>
+    </div>
+</div>
+
+<div id="custom-confirm-modal" class="fixed inset-0 bg-slate-950/55 backdrop-blur-sm hidden items-center justify-center z-[80] p-4">
+    <div class="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 border border-slate-100">
+        <div class="w-12 h-12 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center mb-4 text-xl">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+        </div>
+        <h3 id="custom-confirm-title" class="text-lg font-bold text-slate-900">Atención: Modelo / Serial Faltante</h3>
+        <p id="custom-confirm-message" class="text-sm text-slate-600 mt-2 whitespace-pre-line">No has especificado el Modelo o Serial del Equipo en esta solicitud.
+
+¿Deseas volver al formulario para completarlo o prefieres continuar registrando la solicitud sin este dato?</p>
+        <div class="mt-6 flex flex-col sm:flex-row justify-end gap-3">
+            <button id="custom-confirm-no-btn" class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-sm rounded-xl transition">
+                No requerible (Continuar)
+            </button>
+            <button id="custom-confirm-yes-btn" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-xl transition shadow-sm">
+                Volver y Completar
+            </button>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<script>
+
+    const SUPABASE_URL = "https://yhwkmcavrarqbthsudtb.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_cOoBJ_XN6aQovy0lb4U_RQ_jxFNB9kv";
+
+const supabaseClient = window.supabase.createClient(
+    SUPABASE_URL,
+    SUPABASE_PUBLISHABLE_KEY
+);
+
+async function testSupabaseConnection() {
+    const { data, error } = await supabaseClient
+        .from("solicitudes")
+        .select("id")
+        .limit(1);
+
+    if (error) {
+        console.error("Error conectando con Supabase:", error);
+        return false;
+    }
+
+    console.log("Supabase conectado correctamente:", data);
+    return true;
+}
+/* =========================================================
+   CONFIGURACIÓN DE USUARIOS / PERMISOS
+========================================================= */
+
+/* #########################################################################
+   ##  LISTA_USUARIOS  ·  AQUÍ AGREGAS O QUITAS PERSONAS  (buscar: LISTA_USUARIOS)
+   ##
+   ##  - Solo escribe el NOMBRE entre comillas, separado por coma.
+   ##  - El sistema arma solo el usuario:  CAC.Nombre  /  TDM.Nombre
+   ##  - No importa si escriben cac / CAC / tdm / TDM / mayúsculas / tildes:
+   ##    siempre se reconoce al mismo usuario.
+   ##  - Para QUITAR a alguien: borra su línea (o ponle // delante).
+   ##  - Para AGREGAR a alguien: copia una línea y cambia el nombre.
+   ######################################################################### */
+
+
+/* >>> CAC: PUEDEN CREAR Y GESTIONAR TICKETS (usuario = CAC.Nombre) <<< */
+const ADMIN_USERS = ["Administrador"];
+
+const CAC_USERS = [
+    "Karolin",
+    "Alexander",
+    "Lissy",
+    "Moises",
+    "Yandra",
+    "Johan",
+    "YohannaDC",
+    // "Nombre7",
+];
+
+/* >>> TDM: SOLO PUEDEN SOLICITAR TICKETS (usuario = TDM.Nombre) <<< */
+const TDM_USERS = [
+    "Aschelly",
+    "Lennisse",
+    "Giovanna",
+    "Andreya",
+    "Carolyn",
+    "Lorenzo",
+    "Johana",
+    "Bianca",
+    "Irene",
+    "Annette",
+    "Kerbin",
+    "AlexDJ",
+    "YohannaDC",
+    "Clayerin",
+    "Surreimy",
+    "Karina",
+    "Natalie",
+    "Prueba",
+    // ... (aquí van los ~50 solicitantes, uno por línea)
+];
+
+/* >>> EDICIÓN DE TICKETS (buscar: EDIT_ACCESS_ONE_TIME) <<<
+   true  = cuando el CAC da acceso a editar una orden EN PROCESO, el acceso se cierra solo
+           después de que el TDM guarda su cambio (el CAC tiene que darlo otra vez si hace falta).
+   false = el acceso queda abierto hasta que el CAC lo quite o la orden pase a completada/cancelada. */
+const EDIT_ACCESS_ONE_TIME = true;
+
+/* Contraseña inicial de TODOS (cada quien puede cambiarla con el botón de la llave 🔑) */
+const DEFAULT_PASSWORD = "1234567899";
+
+/* Si algún día quieres que TODOS vuelvan a la contraseña inicial
+   (por ejemplo, alguien olvidó la suya), sube este número: 1 → 2 → 3 ... */
+const PASSWORD_RESET_VERSION = 1;
+
+const PASS_STORE_KEY = "sitodep_tdm_passwords_v1";
+
+/* ---------- Normalización: CAC.Karolin = cac.karolin = CAC.KAROLÍN ---------- */
+function normalizeUser(str) {
+    return (str || "").toString()
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "")   // quita tildes
+        .trim()
+        .replace(/\s*\.\s*/g, ".")                          // "cac . juan" -> "cac.juan"
+        .replace(/\s+/g, " ")
+        .toLowerCase();
+}
+
+/* ---------- Construcción automática de USERS a partir de las listas ---------- */
+const USERS = {};
+
+function registerUsers(list, prefix, role, label) {
+    list.forEach(rawName => {
+        // Si alguien escribe "CAC.Karolin" en la lista, se le quita el prefijo repetido
+        const name = (rawName || "").toString().trim()
+            .replace(new RegExp("^" + prefix + "\\\s*\\\.\\\s*", "i"), "").trim();
+        if (!name) return;
+
+        const display = prefix + "." + name;      // como se ve en pantalla
+        const key = normalizeUser(display);       // como se compara internamente
+        if (USERS[key]) {
+            console.warn("Usuario repetido en la lista:", display);
+            return;
+        }
+        USERS[key] = { key, name, display, prefix, role, label };
+    });
+}
+
+registerUsers(ADMIN_USERS, "ADMIN", "admin", "Administrador · acceso total");
+registerUsers(CAC_USERS, "CAC", "manager",   "Gestor / creador de tickets (CAC)");
+registerUsers(TDM_USERS, "TDM", "requester", "Solicitante / vista de seguimiento (TDM)");
+
+/* Tickets guardados con el formato anterior de usuario (se siguen reconociendo) */
+const LEGACY_USER_MAP = {
+    "karolin.tdm":  "cac.karolin",
+    "moraleja.tdm": "tdm.moraleja"
+};
+
+function resolveUserKey(raw) {
+    const k = normalizeUser(raw);
+    return USERS[k] ? k : (LEGACY_USER_MAP[k] || k);
+}
+
+function sameUser(a, b) { return !!a && !!b && resolveUserKey(a) === resolveUserKey(b); }
+
+function displayUser(raw) {
+    const u = USERS[resolveUserKey(raw)];
+    return u ? u.display : (raw || "");
+}
+
+/* ---------- Permisos ---------- */
+function isAdmin() { return !!currentUser && !!USERS[currentUser] && USERS[currentUser].role === "admin"; }
+function isManager() { return !!currentUser && !!USERS[currentUser] && (USERS[currentUser].role === "manager" || USERS[currentUser].role === "admin"); }
+function isRequester() { return !!currentUser && !!USERS[currentUser] && (USERS[currentUser].role === "requester" || USERS[currentUser].role === "admin"); }
+
+/* ---------- Permisos de EDICIÓN de solicitudes ----------
+   - Solo el TDM que creó la solicitud puede editarla (el CAC nunca la edita).
+   - PENDIENTE  → el TDM edita libremente.
+   - EN PROCESO → solo si el CAC le dio acceso (editAccess.granted).
+   - COMPLETADA / CANCELADA → no se edita. */
+function hasEditAccess(t) { return !!(t && t.editAccess && t.editAccess.granted); }
+
+function isOwnerOf(t) { return !!t && resolveUserKey(t.requester) === currentUser; }
+
+function canRequesterEdit(t) {
+    if (!t || !isRequester() || !isOwnerOf(t)) return false;
+    if (t.status === "pendiente") return true;
+    if (t.status === "proceso") return hasEditAccess(t);
+    return false;
+}
+
+// Campos que se comparan para saber qué cambió y mostrarlo en el historial
+const EDIT_FIELDS = [
+    ["tipo", "Tipo de solicitud"], ["accion", "Tipo de acción"], ["cliente", "Cliente"],
+    ["sucursal", "Sucursal"], ["prioridad", "Prioridad"], ["recibe", "Quién recibe"],
+    ["contacto", "Contacto"], ["fechaRecepcion", "Fecha de recepción"], ["reporta", "Usuario que reporta"],
+    ["modeloActual", "Modelo actual"], ["serialActual", "Serial actual"],
+    ["modeloNuevo", "Modelo del equipo"], ["serialNuevo", "Serial del equipo"],
+    ["facturacion", "Facturación"], ["tipoMantenimiento", "Mantenimiento"],
+    ["usuariosAfectados", "Usuarios afectados"], ["escaneo", "Tipo de escaneo"],
+    ["cantidadUsuarios", "Cantidad de usuarios"], ["conectividad", "Conectividad"],
+    ["incluyeInstalacion", "Incluye instalación"], ["departamento", "Departamento"],
+    ["ultimaReparacion", "Última reparación"], ["delivery", "Delivery"], ["notas", "Notas"]
+];
+
+/* ---------- Contraseñas (guardadas en el navegador, como los tickets) ---------- */
+async function hashPassword(userKey, pass) {
+    const text = "sitodep|" + userKey + "|" + pass;
+    try {
+        if (window.crypto && window.crypto.subtle) {
+            const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+            return "s256:" + Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+        }
+    } catch {}
+    let h = 5381;
+    for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+    return "d33:" + (h >>> 0).toString(16);
+}
+
+/* Las contraseñas cambiadas se guardan en Supabase (tabla usuarios_claves),
+   así valen en cualquier PC. Si el usuario nunca la cambió, usa la inicial. */
+async function fetchStoredHash(userKey) {
+    const { data, error } = await supabaseClient
+        .from("usuarios_claves")
+        .select("clave_hash, reset_version")
+        .eq("usuario", userKey)
+        .maybeSingle();
+
+    if (error) {
+        console.error("❌ Error leyendo contraseña en Supabase:", error);
+        throw error;
+    }
+    if (data && Number(data.reset_version) === PASSWORD_RESET_VERSION) return data.clave_hash;
+    return null;   // sin contraseña propia (o reiniciada): aplica la inicial
+}
+
+async function saveStoredHash(userKey, hash) {
+    const { error } = await supabaseClient
+        .from("usuarios_claves")
+        .upsert({
+            usuario: userKey,
+            clave_hash: hash,
+            reset_version: PASSWORD_RESET_VERSION,
+            updated_at: new Date().toISOString()
+        }, { onConflict: "usuario" });
+
+    if (error) {
+        console.error("❌ Error guardando contraseña en Supabase:", error);
+        throw error;
+    }
+}
+
+async function checkPassword(userKey, pass) {
+    const saved = await fetchStoredHash(userKey);   // puede lanzar error si Supabase falla
+    if (saved) return saved === await hashPassword(userKey, pass);
+    return pass === DEFAULT_PASSWORD;
+}
+
+
+const OLD_STORAGE_KEY = "sitodep_tdm_requests_v9";     // versión anterior (localStorage)
+const FALLBACK_KEY    = "sitodep_tdm_requests_v10";    // solo si IndexedDB no está disponible
+const MIGRATED_KEY    = "sitodep_tdm_migrated_v10";
+const SESSION_KEY     = "sitodep_tdm_active_user";
+const DB_NAME         = "sitodep_tdm_db";
+const DB_STORE        = "tickets";
+
+let currentUser = null;
+let draggedTicketId = null;
+let ticketBeingCompleted = null;
+let ticketBeingCanceled = null;
+let selectedOrderType = "";
+let editingTicketId = null;      // si tiene un número, el formulario está en modo EDICIÓN
+let editEvidenciasKeep = [];     // evidencias que se conservan al editar
+let filterOnlyMine = false;
+let tickets = [];
+// Evita que una recarga de Supabase sobrescriba el movimiento mientras se está guardando.
+const pendingTicketWrites = new Set();
+
+testSupabaseConnection();
+
+let dbRef = null;          // conexión IndexedDB (null = modo respaldo localStorage)
+let channel = null;        // sincroniza pestañas / usuarios en el mismo navegador
+let lbTicketId = null;
+let lbIndex = 0;
+let lbList = [];          // evidencias que muestra el visor
+let lbLabel = "";
+let lbBlobUrl = null;     // URL temporal del PDF abierto
+let lbSeq = 0;
+
+
+/* =========================================================
+   CAPA DE ALMACENAMIENTO (IndexedDB: soporta muchas imágenes)
+========================================================= */
+function openDB() {
+    return new Promise((resolve, reject) => {
+        if (!window.indexedDB) return reject(new Error("IndexedDB no disponible"));
+        const req = indexedDB.open(DB_NAME, 1);
+        req.onupgradeneeded = () => {
+            const db = req.result;
+            if (!db.objectStoreNames.contains(DB_STORE)) {
+                db.createObjectStore(DB_STORE, { keyPath: "id" });
+            }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+}
+
+function dbGetAll() {
+    return new Promise((resolve, reject) => {
+        const tx = dbRef.transaction(DB_STORE, "readonly");
+        const req = tx.objectStore(DB_STORE).getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => reject(req.error);
+    });
+}
+
+function dbPut(ticket) {
+    return new Promise((resolve, reject) => {
+        const tx = dbRef.transaction(DB_STORE, "readwrite");
+        tx.objectStore(DB_STORE).put(JSON.parse(JSON.stringify(ticket)));
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error || new Error("Transacción abortada"));
+    });
+}
+
+function estadoToStatus(estado) {
+    const e = (estado || "").toString().toLowerCase();
+    if (e.includes("proceso")) return "proceso";
+    if (e.includes("complet")) return "completada";
+    if (e.includes("cancel")) return "cancelada";
+    return "pendiente";
+}
+
+function rowToTicket(row) {
+    const d = row.datos || {};
+    return {
+        ...d,
+        id: Number(row.numero_solicitud),
+        createdAt: d.createdAt || row.fecha_solicitud || row.created_at,
+        status: estadoToStatus(row.estado),
+        tipo: row.tipo_solicitud || d.tipo || "",
+        cliente: row.cliente || d.cliente || "",
+        prioridad: row.prioridad || d.prioridad || "Normal",
+        ticketNumber: row.numero_ticket || d.ticketNumber || "",
+        evidencias: Array.isArray(d.evidencias) ? d.evidencias : [],
+        movementHistory: Array.isArray(d.movementHistory) ? d.movementHistory : [],
+        editHistory: Array.isArray(d.editHistory) ? d.editHistory : [],
+        edited: !!d.edited,
+        editAccess: d.editAccess && typeof d.editAccess === "object" ? d.editAccess : { granted: false }
+    };
+}
+
+function errMsg(err) {
+    if (!err) return "";
+    return (err.message || err.details || String(err)).toString();
+}
+
+// Supabase es la fuente de verdad: todos los usuarios ven los mismos tickets
+async function loadAllTickets() {
+    const { data, error } = await supabaseClient
+        .from("solicitudes")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+    if (error) {
+        console.error("❌ Error leyendo solicitudes de Supabase:", error);
+        throw error;
+    }
+
+    const seen = new Set();
+    const result = [];
+    for (const row of data || []) {
+        const key = String(row.numero_solicitud);
+        if (seen.has(key)) continue;          // si hay duplicados, queda el más reciente
+        seen.add(key);
+        if (isNaN(Number(row.numero_solicitud))) continue;
+        result.push(rowToTicket(row));
+    }
+    return result;
+}
+
+async function persistTicket(ticket, isNew = false) {
+
+    console.log("🔥 PERSIST TICKET:", ticket);
+
+    const estadoSupabase =
+        ticket.status === "proceso"
+            ? "En proceso"
+            : ticket.status === "completada"
+                ? "Completada"
+                : ticket.status === "cancelada"
+                    ? "Cancelada"
+                    : "Pendiente";
+
+    const datosActualizados = {
+        requester: ticket.requester || "",
+        reporta: ticket.reporta || "",
+        contacto: ticket.contacto || "",
+
+        tipo: ticket.tipo || "",
+        accion: ticket.accion || "",
+
+        cliente: ticket.cliente || "",
+        sucursal: ticket.sucursal || "",
+        prioridad: ticket.prioridad || "Normal",
+        recibe: ticket.recibe || "",
+        fechaRecepcion: ticket.fechaRecepcion || "",
+
+        modeloActual: ticket.modeloActual || "",
+        serialActual: ticket.serialActual || "",
+        modeloNuevo: ticket.modeloNuevo || "",
+        serialNuevo: ticket.serialNuevo || "",
+
+        facturacion: ticket.facturacion || "",
+        tipoMantenimiento: ticket.tipoMantenimiento || "",
+        usuariosAfectados: ticket.usuariosAfectados || "",
+        escaneo: ticket.escaneo || "",
+        cantidadUsuarios: ticket.cantidadUsuarios || "",
+        conectividad: ticket.conectividad || "",
+        incluyeInstalacion: ticket.incluyeInstalacion || "",
+        departamento: ticket.departamento || "",
+        ultimaReparacion: ticket.ultimaReparacion || "",
+        delivery: ticket.delivery || false,
+
+        notas: ticket.notas || "",
+        evidencias: ticket.evidencias || [],
+
+        createdAt: ticket.createdAt || "",
+
+        movedBy: ticket.movedBy || "",
+        movedAt: ticket.movedAt || "",
+        assignedCAC: ticket.assignedCAC || "",
+        assignedCACAt: ticket.assignedCACAt || "",
+
+        movementHistory: ticket.movementHistory || [],
+
+        // Edición de la solicitud
+        edited: !!ticket.edited,
+        editCount: ticket.editCount || 0,
+        lastEditedBy: ticket.lastEditedBy || "",
+        lastEditedAt: ticket.lastEditedAt || "",
+        editHistory: ticket.editHistory || [],
+        editAccess: ticket.editAccess || { granted: false },
+
+        ticketNumber: ticket.ticketNumber || "",
+
+        completedBy: ticket.completedBy || "",
+        completedAt: ticket.completedAt || "",
+
+        cancelReason: ticket.cancelReason || "",
+        canceledBy: ticket.canceledBy || "",
+        canceledAt: ticket.canceledAt || ""
+    };
+
+
+    // Copia local opcional (si falla, no afecta el guardado real)
+    try { if (dbRef) await dbPut(ticket); } catch (e) { console.warn("Copia local no guardada:", e); }
+
+
+    // =========================================================
+    // 2. BUSCAR SI YA EXISTE EN SUPABASE
+    // =========================================================
+
+    let existingRows = [];
+    let searchError = null;
+    if (!isNew) {
+        const r = await supabaseClient
+            .from("solicitudes")
+            .select("id")
+            .eq("numero_solicitud", String(ticket.id))
+            .order("created_at", { ascending: false })
+            .limit(1);
+        existingRows = r.data || [];
+        searchError = r.error;
+    }
+
+    if (searchError) {
+        console.error("❌ Error buscando solicitud en Supabase:", searchError);
+        throw searchError;
+    }
+
+
+    // =========================================================
+    // 3. SI YA EXISTE → UPDATE
+    // =========================================================
+
+    if (existingRows && existingRows.length > 0) {
+
+        const dbId = existingRows[0].id;
+
+        const { data: updRows, error } = await supabaseClient
+            .from("solicitudes")
+            .update({
+                tipo_solicitud: ticket.tipo || "Sin especificar",
+                cliente: ticket.cliente || "",
+                solicitado_por: ticket.reporta || ticket.requester || "",
+                fecha_solicitud: ticket.createdAt || new Date().toISOString(),
+                prioridad: ticket.prioridad || "Normal",
+                estado: estadoSupabase,
+                numero_ticket: ticket.ticketNumber || null,
+                datos: datosActualizados,
+                updated_at: new Date().toISOString()
+            })
+            .eq("id", dbId)
+            .select();
+
+        if (error) {
+            console.error("❌ Error actualizando solicitud en Supabase:", error);
+            throw error;
+        }
+
+        if (!updRows || !updRows.length) {
+            const e = new Error("Supabase no permitió actualizar la solicitud (falta la política UPDATE en la tabla 'solicitudes').");
+            console.error("❌", e.message);
+            throw e;
+        }
+
+        console.log("✅ SOLICITUD ACTUALIZADA EN SUPABASE:", updRows[0]);
+
+        return updRows[0];
+    }
+
+
+    // =========================================================
+    // 4. SI NO EXISTE → INSERTAR NUEVA
+    // =========================================================
+
+    const { data, error } = await supabaseClient
+        .from("solicitudes")
+        .insert({
+            numero_solicitud: String(ticket.id),
+            tipo_solicitud: ticket.tipo || "Sin especificar",
+            cliente: ticket.cliente || "",
+            solicitado_por: ticket.reporta || ticket.requester || "",
+            fecha_solicitud: ticket.createdAt || new Date().toISOString(),
+            prioridad: ticket.prioridad || "Normal",
+            estado: estadoSupabase,
+            numero_ticket: ticket.ticketNumber || null,
+            datos: datosActualizados
+        })
+        .select()
+        .single();
+
+    if (error) {
+        console.error("❌ Error creando solicitud en Supabase:", error);
+        throw error;
+    }
+
+    console.log("✅ SOLICITUD CREADA EN SUPABASE:", data);
+
+    return data;
+}
+
+async function reloadTickets() {
+    tickets = await loadAllTickets();
+}
+
+function notifyChange() {
+    try { if (channel) channel.postMessage("changed"); } catch {}
+}
+
+function renderCurrent() {
+    if (!currentUser || !USERS[currentUser]) return;
+    const role = USERS[currentUser].role;
+    if (role === "admin") {
+        if (adminActiveView === "cac") renderKanban();
+        else if (adminActiveView === "tdm") renderRequesterView();
+        else renderAdminMetrics();
+    } else if (role === "manager") {
+        renderKanban();
+        if (!document.getElementById("history-modal").classList.contains("hidden")) renderHistoryView();
+    } else renderRequesterView();
+}
+
+async function reloadAndRender() {
+    // No refrescar durante un arrastre ni mientras haya cambios locales pendientes de guardar.
+    if (draggedTicketId || pendingTicketWrites.size > 0) return;
+    try {
+        const loadedTickets = await loadAllTickets();
+        // Una carga que empezó antes del movimiento no debe reemplazar el estado optimista.
+        if (draggedTicketId || pendingTicketWrites.size > 0) return;
+        tickets = loadedTickets;
+        renderCurrent();
+    } catch (err) {
+        console.error("Error recargando:", err);
+    }
+}
+
+async function initStorage() {
+    try {
+        dbRef = await openDB();
+    } catch (err) {
+        console.warn("IndexedDB no disponible, usando localStorage:", err);
+        dbRef = null;
+    }
+
+    try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch {}
+
+    try { await reloadTickets(); } catch (err) { console.error("No se pudieron cargar las solicitudes:", err); }
+
+    try {
+        channel = new BroadcastChannel("sitodep_tdm_channel");
+        channel.onmessage = () => reloadAndRender();
+    } catch {}
+
+    window.addEventListener("storage", e => {
+        if (e.key === FALLBACK_KEY) reloadAndRender();
+    });
+    window.addEventListener("focus", reloadAndRender);
+    document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) reloadAndRender();
+    });
+    setInterval(reloadAndRender, 10000);
+}
+
+function buildDemoTickets() {
+    return [{
+        id: 1,
+        createdAt: new Date().toISOString(),
+        status: "pendiente",
+        tipo: "CAMBIO DE EQUIPO",
+        accion: "Sustitución Por Desgaste General",
+        cliente: "Cliente Demo 1",
+        prioridad: "INMEDIATO",
+        recibe: "Juan Pérez",
+        contacto: "809-555-0101",
+        fechaRecepcion: getTodayString(),
+        reporta: "Moraleja",
+        requester: "tdm.moraleja",
+        modeloActual: "HP LASERJET M404",
+        serialActual: "SN-HP-9988",
+        modeloNuevo: "EPSON ECOTANK L5290",
+        serialNuevo: "SN-EPS-1122",
+        cantidadUsuarios: "5",
+        conectividad: "Red Cableada",
+        departamento: "Administración",
+        notas: "Requiere entregarse con cable de red adicional.",
+        evidencias: [],
+        movedBy: "",
+        movedAt: "",
+        ticketNumber: "",
+        cancelReason: "",
+        canceledBy: "",
+        canceledAt: ""
+    }];
+}
+
+
+/* =========================================================
+   HELPERS DE FECHA Y FORMATO
+========================================================= */
+function toLocalISODate(d) {
+    const x = new Date(d);
+    if (isNaN(x)) return "";
+    return x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0");
+}
+
+function getTodayString() {
+    return toLocalISODate(new Date());
+}
+
+// Día en que "cuenta" el ticket dentro del tablero de la gestora
+function ticketBoardDay(t) {
+    if (t.status === "completada") return toLocalISODate(t.completedAt || t.createdAt);
+    if (t.status === "cancelada") return toLocalISODate(t.canceledAt || t.createdAt);
+    return toLocalISODate(t.createdAt);
+}
+
+function formatTitleCase(str) {
+    if (!str) return "";
+    return str.toString().toLowerCase().split(' ').map(word => {
+        if (!word) return '';
+        return word.charAt(0).toUpperCase() + word.slice(1);
+    }).join(' ');
+}
+
+// Quién del CAC tiene / completó / canceló el ticket (en pendiente no hay nadie aún)
+function handlerInfo(t) {
+    if (t.status === "proceso" && t.movedBy) {
+        return { label: "En proceso por", name: displayUser(t.movedBy), at: t.movedAt, cls: "text-blue-700" };
+    }
+    if (t.status === "completada") {
+        const who = t.completedBy || t.movedBy;
+        if (who) return { label: "Completó", name: displayUser(who), at: t.completedAt, cls: "text-emerald-700" };
+    }
+    if (t.status === "cancelada") {
+        const who = t.canceledBy || t.movedBy;
+        if (who) return { label: "Canceló", name: displayUser(who), at: t.canceledAt, cls: "text-rose-700" };
+    }
+    return null;
+}
+
+function handlerCell(t) {
+    const h = handlerInfo(t);
+    if (!h) return `<span class="text-xs text-slate-300">—</span>`;
+    return `<div class="text-[10px] uppercase tracking-wider font-bold text-slate-400">${h.label}</div>
+            <div class="text-sm font-bold ${h.cls}">${escapeHtml(h.name)}</div>
+            ${h.at ? `<div class="text-[10px] text-slate-400">${formatDateTime(h.at)}</div>` : ""}`;
+}
+
+// Etiquetas "Editada" / "Edición habilitada" que ven CAC y TDM
+function editBadges(t) {
+    let html = "";
+    if (t.edited) {
+        const quien = t.lastEditedBy ? displayUser(t.lastEditedBy) : "";
+        const cuando = t.lastEditedAt ? formatDateTime(t.lastEditedAt) : "";
+        html += `<span title="Editada${quien ? " por " + escapeHtml(quien) : ""}${cuando ? " · " + escapeHtml(cuando) : ""}" class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] uppercase font-bold bg-amber-100 text-amber-700"><i class="fa-solid fa-pen text-[8px]"></i>Editada${t.editCount > 1 ? " x" + t.editCount : ""}</span>`;
+    }
+    if (t.status === "proceso" && hasEditAccess(t)) {
+        html += `<span title="El CAC habilitó la edición de esta solicitud" class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] uppercase font-bold bg-violet-100 text-violet-700"><i class="fa-solid fa-lock-open text-[8px]"></i>Edición habilitada</span>`;
+    }
+    return html;
+}
+
+function priorityBadge(priority) {
+    if (priority === "INMEDIATO") {
+        return "bg-rose-100 text-rose-800 font-extrabold border border-rose-200";
+    }
+    if (priority === "Urgente") {
+        return "bg-amber-100 text-amber-800 font-bold border border-amber-200";
+    }
+    return "bg-slate-100 text-slate-700 font-medium border border-slate-200";
+}
+
+
+/* =========================================================
+   MODALES Y ALERTAS
+========================================================= */
+function showCustomAlert(message, title = "Notificación", type = "info") {
+    const modal = document.getElementById("custom-alert-modal");
+    const titleEl = document.getElementById("custom-alert-title");
+    const msgEl = document.getElementById("custom-alert-message");
+    const iconEl = document.getElementById("custom-alert-icon");
+
+    titleEl.innerText = title;
+    msgEl.innerText = message;
+
+    if (type === "success") {
+        iconEl.className = "w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center mb-4 text-xl";
+        iconEl.innerHTML = '<i class="fa-solid fa-circle-check"></i>';
+    } else if (type === "error") {
+        iconEl.className = "w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mb-4 text-xl";
+        iconEl.innerHTML = '<i class="fa-solid fa-circle-xmark"></i>';
+    } else {
+        iconEl.className = "w-12 h-12 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center mb-4 text-xl";
+        iconEl.innerHTML = '<i class="fa-solid fa-circle-info"></i>';
+    }
+
+    modal.classList.remove("hidden");
+    modal.classList.add("flex");
+}
+
+function closeCustomAlert() {
+    const modal = document.getElementById("custom-alert-modal");
+    modal.classList.add("hidden");
+    modal.classList.remove("flex");
+}
+
+function showEquipmentConfirmModal(onYes, onNo) {
+    const modal = document.getElementById("custom-confirm-modal");
+    const yesBtn = document.getElementById("custom-confirm-yes-btn");
+    const noBtn = document.getElementById("custom-confirm-no-btn");
+
+    modal.classList.remove("hidden");
+    modal.classList.add("flex");
+
+    const closeModal = () => {
+        modal.classList.add("hidden");
+        modal.classList.remove("flex");
+    };
+
+    yesBtn.onclick = () => { closeModal(); if (onYes) onYes(); };
+    noBtn.onclick = () => { closeModal(); if (onNo) onNo(); };
+}
+
+
+/* =========================================================
+   LOGIN / LOGOUT / PERSISTENCIA DE SESIÓN
+========================================================= */
+async function handleLogin(e) {
+    e.preventDefault();
+
+    const user = normalizeUser(document.getElementById("username").value);
+    const pass = document.getElementById("password").value.trim();
+
+    let passOk = false;
+    if (USERS[user]) {
+        try {
+            passOk = await checkPassword(user, pass);
+        } catch (err) {
+            showCustomAlert("No se pudo verificar la contraseña. Revisa tu conexión e intenta de nuevo.\n\nDetalle: " + errMsg(err), "Error de Conexión", "error");
+            return;
+        }
+    }
+
+    if (!passOk) {
+        showCustomAlert("Usuario o contraseña incorrectos.", "Error de Inicio de Sesión", "error");
+        return;
+    }
+
+    currentUser = user;
+    sessionStorage.setItem(SESSION_KEY, currentUser);
+
+    await reloadTickets();
+
+    document.getElementById("login-screen").classList.add("hidden");
+    document.getElementById("app-screen").classList.remove("hidden");
+
+    initDashboard();
+}
+
+function logout() {
+    currentUser = null;
+    sessionStorage.removeItem(SESSION_KEY);
+
+    document.getElementById("app-screen").classList.add("hidden");
+    document.getElementById("login-screen").classList.remove("hidden");
+    document.getElementById("username").value = "";
+    document.getElementById("password").value = "";
+}
+
+function checkActiveSession() {
+    const savedUser = sessionStorage.getItem(SESSION_KEY);
+    if (savedUser && USERS[savedUser]) {
+        currentUser = savedUser;
+        document.getElementById("login-screen").classList.add("hidden");
+        document.getElementById("app-screen").classList.remove("hidden");
+        initDashboard();
+    }
+}
+
+/* =========================================================
+   CAMBIO DE CONTRASEÑA
+========================================================= */
+function openPasswordModal() {
+    if (!currentUser || !USERS[currentUser]) return;
+    document.getElementById("pw-username").innerText = USERS[currentUser].display;
+    ["pw-current", "pw-new", "pw-confirm"].forEach(id => document.getElementById(id).value = "");
+    const modal = document.getElementById("password-modal");
+    modal.classList.remove("hidden");
+    modal.classList.add("flex");
+    setTimeout(() => document.getElementById("pw-current").focus(), 50);
+}
+
+function closePasswordModal() {
+    const modal = document.getElementById("password-modal");
+    if (!modal) return;
+    modal.classList.add("hidden");
+    modal.classList.remove("flex");
+}
+
+async function handleChangePassword(e) {
+    e.preventDefault();
+    if (!currentUser || !USERS[currentUser]) return;
+
+    const current = document.getElementById("pw-current").value.trim();
+    const next    = document.getElementById("pw-new").value.trim();
+    const confirm = document.getElementById("pw-confirm").value.trim();
+
+    let currentOk = false;
+    try {
+        currentOk = await checkPassword(currentUser, current);
+    } catch (err) {
+        showCustomAlert("No se pudo verificar la contraseña actual.\n\nDetalle: " + errMsg(err), "Error de Conexión", "error");
+        return;
+    }
+    if (!currentOk) {
+        showCustomAlert("La contraseña actual no es correcta.", "Contraseña Incorrecta", "error");
+        return;
+    }
+    if (next.length < 6) {
+        showCustomAlert("La nueva contraseña debe tener al menos 6 caracteres.", "Contraseña Muy Corta", "info");
+        return;
+    }
+    if (next === DEFAULT_PASSWORD) {
+        showCustomAlert("La nueva contraseña no puede ser la contraseña inicial.", "Elige Otra Contraseña", "info");
+        return;
+    }
+    if (next !== confirm) {
+        showCustomAlert("La confirmación no coincide con la nueva contraseña.", "No Coinciden", "info");
+        return;
+    }
+
+    try {
+        await saveStoredHash(currentUser, await hashPassword(currentUser, next));
+    } catch (err) {
+        showCustomAlert("No se pudo guardar la contraseña.\n\nDetalle: " + errMsg(err), "Error al Guardar", "error");
+        return;
+    }
+
+    closePasswordModal();
+    showCustomAlert("Tu contraseña fue actualizada. Úsala la próxima vez que inicies sesión.", "Contraseña Actualizada", "info");
+}
+
+function initDashboard() {
+    const user = USERS[currentUser];
+    document.getElementById("header-username").innerText = user.display;
+    document.getElementById("user-role-badge").innerText = "Rol: " + user.label;
+    ["requester-view", "manager-view", "admin-view"].forEach(id => document.getElementById(id).classList.add("hidden"));
+    if (user.role === "requester") {
+        document.getElementById("requester-view").classList.remove("hidden");
+        renderRequesterView();
+    } else if (user.role === "manager") {
+        document.getElementById("manager-view").classList.remove("hidden");
+        if (!document.getElementById("manager-filter-date").value) document.getElementById("manager-filter-date").value = getTodayString();
+        renderKanban();
+    } else if (user.role === "admin") {
+        document.getElementById("admin-view").classList.remove("hidden");
+        adminNavigate("metrics");
+    }
+}
+
+let adminActiveView = "metrics";
+function adminNavigate(view) {
+    if (!isAdmin()) return;
+    adminActiveView = view;
+    document.getElementById("admin-metrics-panel").classList.toggle("hidden", view !== "metrics");
+    document.getElementById("manager-view").classList.toggle("hidden", view !== "cac");
+    document.getElementById("requester-view").classList.toggle("hidden", view !== "tdm");
+    if (view === "metrics") renderAdminMetrics();
+    if (view === "cac") {
+        if (!document.getElementById("manager-filter-date").value) document.getElementById("manager-filter-date").value = getTodayString();
+        renderKanban();
+    }
+    if (view === "tdm") renderRequesterView();
+}
+function renderAdminMetrics() {
+    if (!isAdmin()) return;
+    const count = status => tickets.filter(t => t.status === status).length;
+    document.getElementById("admin-total").innerText = tickets.length;
+    document.getElementById("admin-process").innerText = count("proceso");
+    document.getElementById("admin-completed").innerText = count("completada");
+    document.getElementById("admin-canceled").innerText = count("cancelada");
+    const cacBody = document.getElementById("admin-cac-metrics");
+    const tdmBody = document.getElementById("admin-tdm-metrics");
+    cacBody.innerHTML = Object.values(USERS).filter(u => u.role === "manager").map(u => {
+        const taken = tickets.filter(t => resolveUserKey(t.assignedCAC || "") === u.key).length;
+        const completed = tickets.filter(t => resolveUserKey(t.completedBy || "") === u.key).length;
+        const canceled = tickets.filter(t => resolveUserKey(t.canceledBy || "") === u.key).length;
+        return `<tr class="border-b border-slate-100"><td class="py-3 pr-3 font-semibold">${escapeHtml(u.display)}</td><td class="py-3 px-2">${taken}</td><td class="py-3 px-2">${completed}</td><td class="py-3 px-2">${canceled}</td></tr>`;
+    }).join("") || `<tr><td colspan="4" class="py-4 text-slate-400">Sin usuarios CAC configurados.</td></tr>`;
+    tdmBody.innerHTML = Object.values(USERS).filter(u => u.role === "requester").map(u => {
+        const mine = tickets.filter(t => resolveUserKey(t.requester || "") === u.key);
+        return `<tr class="border-b border-slate-100"><td class="py-3 pr-3 font-semibold">${escapeHtml(u.display)}</td><td class="py-3 px-2">${mine.length}</td><td class="py-3 px-2">${mine.filter(t => t.status === "pendiente").length}</td><td class="py-3 px-2">${mine.filter(t => t.status === "completada").length}</td></tr>`;
+    }).join("") || `<tr><td colspan="4" class="py-4 text-slate-400">Sin usuarios TDM configurados.</td></tr>`;
+}
+
+function toggleFilterMine() {
+    filterOnlyMine = !filterOnlyMine;
+    const btn = document.getElementById("btn-filter-mine");
+    const lbl = document.getElementById("lbl-filter-mine");
+
+    if (filterOnlyMine) {
+        btn.classList.remove("bg-slate-100", "text-slate-700");
+        btn.classList.add("bg-indigo-600", "text-white");
+        lbl.innerText = "Mostrando solo mis solicitudes";
+    } else {
+        btn.classList.remove("bg-indigo-600", "text-white");
+        btn.classList.add("bg-slate-100", "text-slate-700");
+        lbl.innerText = "Ver solo mis solicitudes";
+    }
+
+    renderRequesterView();
+}
+
+function clearDateFilter(target) {
+    if (target === 'requester') {
+        document.getElementById("filter-date").value = "";
+        renderRequesterView();
+    } else {
+        document.getElementById("manager-filter-date").value = "";
+        renderKanban();
+    }
+}
+
+function getRequesterFiltered() {
+    const searchVal = value("filter-search").toLowerCase();
+    const statusVal = value("filter-status");
+    const dateVal = value("filter-date");
+
+    let filtered = [...tickets];
+
+    if (filterOnlyMine) {
+        filtered = filtered.filter(t => resolveUserKey(t.requester) === currentUser);
+    }
+
+    if (statusVal && statusVal !== "todos") {
+        filtered = filtered.filter(t => t.status === statusVal);
+    }
+
+    if (dateVal) {
+        filtered = filtered.filter(t => toLocalISODate(t.createdAt) === dateVal);
+    }
+
+    if (searchVal) {
+        filtered = filtered.filter(t =>
+            (t.cliente && t.cliente.toLowerCase().includes(searchVal)) ||
+            (t.sucursal && t.sucursal.toLowerCase().includes(searchVal)) ||
+            (t.tipo && t.tipo.toLowerCase().includes(searchVal)) ||
+            (t.accion && t.accion.toLowerCase().includes(searchVal)) ||
+            (t.requester && displayUser(t.requester).toLowerCase().includes(searchVal)) ||
+            (t.ticketNumber && t.ticketNumber.toLowerCase().includes(searchVal)) ||
+            (t.id && t.id.toString().includes(searchVal))
+        );
+    }
+    return filtered;
+}
+
+function renderRequesterView() {
+    const tbody = document.getElementById("requester-table-body");
+    const filtered = getRequesterFiltered();
+
+    const sorted = filtered.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    document.getElementById("requester-total").innerText = tickets.length;
+    document.getElementById("requester-pending").innerText = tickets.filter(t => t.status === "pendiente").length;
+    document.getElementById("requester-process").innerText = tickets.filter(t => t.status === "proceso").length;
+    document.getElementById("requester-completed").innerText = tickets.filter(t => t.status === "completada").length;
+    document.getElementById("requester-canceled").innerText = tickets.filter(t => t.status === "cancelada").length;
+
+    tbody.innerHTML = "";
+
+    if (!sorted.length) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="10" class="px-5 py-12 text-center text-sm text-slate-400">
+                    No se encontraron solicitudes para el criterio especificado.
+                </td>
+            </tr>`;
+        return;
+    }
+
+    sorted.forEach(t => {
+        const status = statusConfig(t.status);
+
+        const tr = document.createElement("tr");
+        tr.className = "border-b border-slate-100 request-row cursor-pointer";
+        tr.onclick = () => openDetailModal(t.id);
+
+        tr.innerHTML = `
+            <td class="px-5 py-4">
+                <div class="font-bold text-sm text-slate-800">Solicitud #${t.id}</div>
+                <div class="text-[11px] text-slate-400 mt-0.5">${formatDate(t.createdAt)}</div>
+            </td>
+            <td class="px-5 py-4">
+                <span class="inline-flex px-2 py-0.5 rounded text-[10px] uppercase font-bold ${priorityBadge(t.prioridad)}">
+                    ${escapeHtml(t.prioridad || "Normal")}
+                </span>
+            </td>
+            <td class="px-5 py-4">
+                <span class="inline-flex px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 text-xs font-bold">
+                    ${escapeHtml(t.tipo)}
+                </span>
+            </td>
+            <td class="px-5 py-4 text-sm text-slate-700 font-medium">${escapeHtml(t.cliente)}</td>
+            <td class="px-5 py-4 text-sm text-slate-600 font-semibold">${escapeHtml(t.requester ? displayUser(t.requester) : (t.reporta || "—"))}</td>
+            <td class="px-5 py-4 text-xs text-slate-500">${formatDateTime(t.createdAt)}</td>
+            <td class="px-5 py-4">
+                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${status.badge}">
+                    <span class="status-dot ${status.dot}"></span>
+                    ${status.label}
+                </span>
+                <div class="mt-1 flex flex-wrap gap-1">${editBadges(t)}</div>
+            </td>
+            <td class="px-5 py-4">${handlerCell(t)}</td>
+            <td class="px-5 py-4">
+                ${t.ticketNumber
+                    ? `<span class="font-bold text-emerald-700">${escapeHtml(t.ticketNumber)}</span>`
+                    : `<span class="text-xs text-slate-400">Pendiente</span>`}
+            </td>
+            <td class="px-5 py-4 text-right whitespace-nowrap" onclick="event.stopPropagation()">
+                ${canRequesterEdit(t) ? `
+                    <button onclick="openEditModal(${t.id})" title="Editar solicitud" class="p-2 text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 rounded-lg transition">
+                        <i class="fa-solid fa-pen-to-square"></i>
+                    </button>
+                ` : (isOwnerOf(t) && t.status === "proceso" ? `
+                    <span title="En proceso: pídele al CAC que te dé acceso para editar" class="inline-block p-2 text-slate-300"><i class="fa-solid fa-lock"></i></span>
+                ` : "")}
+                ${t.status !== "cancelada" && t.status !== "completada" ? `
+                    <button onclick="openCancelModal(${t.id})" title="Cancelar Solicitud" class="p-2 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition">
+                        <i class="fa-solid fa-ban"></i>
+                    </button>
+                ` : '—'}
+            </td>
+        `;
+
+        tbody.appendChild(tr);
+    });
+}
+
+
+/* =========================================================
+   VISTA GESTORA / KANBAN
+========================================================= */
+function renderKanban() {
+    const columns = ["pendiente", "proceso", "completada", "cancelada"];
+    const counts = { pendiente: 0, proceso: 0, completada: 0, cancelada: 0 };
+    const selectedDate = value("manager-filter-date");
+    const today = getTodayString();
+
+    const dateBadge = document.getElementById("manager-date-badge");
+    if (selectedDate) {
+        dateBadge.innerText = selectedDate === today
+            ? "Mostrando jornada activa de hoy"
+            : `Mostrando fecha específica: ${selectedDate}`;
+    } else {
+        dateBadge.innerText = "Mostrando órdenes acumuladas activas";
+    }
+
+    columns.forEach(col => {
+        const el = document.getElementById(`col-${col}`);
+        if (el) el.innerHTML = "";
+    });
+
+    const filteredKanban = tickets.filter(t => {
+        if (t.status === "pendiente" || t.status === "proceso") return true;
+        const day = ticketBoardDay(t);
+        return day === (selectedDate || today);
+    });
+
+    filteredKanban.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+
+    filteredKanban.forEach(t => {
+        if (!counts.hasOwnProperty(t.status)) return;
+        counts[t.status]++;
+
+        const col = document.getElementById(`col-${t.status}`);
+        if (!col) return;
+
+        const card = document.createElement("div");
+        card.id = `ticket-${t.id}`;
+        card.setAttribute("draggable", "true");
+        card.className = "bg-white p-4 rounded-2xl shadow-sm border border-slate-200 cursor-grab hover:shadow-md transition active:cursor-grabbing";
+
+        card.addEventListener("dragstart", e => drag(e, t.id));
+        card.addEventListener("dragend", () => {
+            card.classList.remove("dragging");
+            draggedTicketId = null;
+            document.querySelectorAll(".kanban-col.drag-over").forEach(c => c.classList.remove("drag-over"));
+        });
+
+        const quickBtn =
+            t.status === "pendiente"
+                ? `<button onclick="event.stopPropagation(); moveTicket(${t.id}, 'proceso')" title="Pasar a En proceso" class="px-2 py-1 text-[11px] font-bold text-blue-600 hover:bg-blue-50 rounded-lg"><i class="fa-solid fa-play mr-1"></i>Iniciar</button>`
+            : t.status === "proceso"
+                ? `<button onclick="event.stopPropagation(); moveTicket(${t.id}, 'completada')" title="Completar" class="px-2 py-1 text-[11px] font-bold text-emerald-600 hover:bg-emerald-50 rounded-lg"><i class="fa-solid fa-check mr-1"></i>Completar</button>`
+                : "";
+
+        card.innerHTML = `
+            <div class="flex items-center justify-between gap-2 mb-3">
+                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 text-[11px] font-bold">
+                    <i class="fa-solid fa-tag text-[9px]"></i>
+                    ${escapeHtml(t.tipo)}
+                </span>
+                <span class="inline-flex px-2 py-0.5 rounded text-[10px] uppercase font-bold ${priorityBadge(t.prioridad)}">
+                    ${escapeHtml(t.prioridad || "Normal")}
+                </span>
+            </div>
+
+            ${editBadges(t) ? `<div class="mb-2 flex flex-wrap gap-1">${editBadges(t)}</div>` : ""}
+
+            <div class="mb-2 flex items-center justify-between">
+                <span class="text-[10px] font-bold text-slate-400">#${t.id}</span>
+                <span class="text-[10px] font-medium text-slate-400">${formatDate(t.createdAt)}</span>
+            </div>
+
+            <div class="mb-2">
+                <p class="text-[10px] uppercase tracking-wider font-bold text-slate-400">Cliente</p>
+                <p class="font-bold text-sm text-slate-800 mt-0.5">${escapeHtml(t.cliente)}</p>
+            </div>
+
+            ${t.sucursal ? `
+            <div class="mb-2">
+                <p class="text-[10px] uppercase tracking-wider font-bold text-slate-400">Sucursal</p>
+                <p class="text-xs font-semibold text-slate-700 mt-0.5">${escapeHtml(t.sucursal)}</p>
+            </div>` : ""}
+
+            <div class="mb-2">
+                <p class="text-[10px] uppercase tracking-wider font-bold text-slate-400">Solicitado Por</p>
+                <p class="text-xs font-semibold text-indigo-700 mt-0.5">${escapeHtml(t.requester ? displayUser(t.requester) : (t.reporta || "—"))}</p>
+            </div>
+
+            <div class="mb-3">
+                <p class="text-[10px] uppercase tracking-wider font-bold text-slate-400">Acción</p>
+                <p class="text-xs text-slate-600 mt-0.5">${escapeHtml(t.accion || "—")}</p>
+            </div>
+
+            ${t.status === "proceso" ? `
+                <div class="mb-3 p-2.5 rounded-xl bg-blue-50 border border-blue-100">
+                    <p class="text-[10px] uppercase tracking-wider font-bold text-blue-500">Movido a proceso por</p>
+                    <p class="text-xs font-bold text-blue-800 mt-0.5">${escapeHtml(t.movedBy || "—")}</p>
+                </div>
+            ` : ""}
+
+            ${t.status === "completada" ? `
+                <div class="mb-3 p-2.5 rounded-xl bg-emerald-50 border border-emerald-100 space-y-2">
+                    <div>
+                        <p class="text-[10px] uppercase tracking-wider font-bold text-emerald-600">No. ticket / orden</p>
+                        <p class="text-sm font-extrabold text-emerald-800 mt-0.5">${escapeHtml(t.ticketNumber || "—")}</p>
+                    </div>
+                    <div class="pt-2 border-t border-emerald-100">
+                        <p class="text-[10px] uppercase tracking-wider font-bold text-emerald-600">Completado por</p>
+                        <p class="text-xs font-bold text-emerald-800 mt-0.5">${escapeHtml(displayUser(t.completedBy || t.movedBy || "—"))}</p>
+                    </div>
+                </div>
+            ` : ""}
+
+            ${t.status === "cancelada" ? `
+                <div class="mb-3 p-2.5 rounded-xl bg-rose-50 border border-rose-100">
+                    <p class="text-[10px] uppercase tracking-wider font-bold text-rose-600">Cancelado por: ${escapeHtml(t.canceledBy || "—")}</p>
+                    <p class="text-xs text-rose-800 mt-0.5">${escapeHtml(t.cancelReason || "Sin motivo registrado")}</p>
+                </div>
+            ` : ""}
+
+            <div class="flex items-center gap-1 border-t border-slate-100 pt-2 mt-1">
+                <button onclick="event.stopPropagation(); openDetailModal(${t.id})"
+                    class="flex-1 text-xs font-semibold text-slate-500 hover:text-indigo-600 py-1 text-center">
+                    <i class="fa-solid fa-eye mr-1"></i> Ver detalle
+                </button>
+                ${t.status === "proceso" ? `
+                    <button onclick="event.stopPropagation(); toggleEditAccess(${t.id})" title="${hasEditAccess(t) ? "Quitar acceso de edición" : "Dar acceso para que el TDM edite"}" class="px-2 py-1 text-[11px] font-bold ${hasEditAccess(t) ? "text-violet-700 bg-violet-50" : "text-violet-600 hover:bg-violet-50"} rounded-lg">
+                        <i class="fa-solid ${hasEditAccess(t) ? "fa-lock-open" : "fa-pen"} mr-1"></i>${hasEditAccess(t) ? "Quitar edición" : "Permitir edición"}
+                    </button>
+                ` : ""}
+                ${quickBtn}
+                ${t.status !== "cancelada" && t.status !== "completada" ? `
+                    <button onclick="event.stopPropagation(); openCancelModal(${t.id})" title="Cancelar" class="p-1 text-rose-500 hover:text-rose-700">
+                        <i class="fa-solid fa-ban text-xs"></i>
+                    </button>
+                ` : ''}
+            </div>
+        `;
+
+        card.addEventListener("dblclick", () => openDetailModal(t.id));
+        col.appendChild(card);
+    });
+
+    columns.forEach(col => {
+        const countEl = document.getElementById(`count-${col}`);
+        if (countEl) countEl.innerText = counts[col];
+    });
+
+    document.getElementById("manager-total").innerText = filteredKanban.length;
+    document.getElementById("manager-pending").innerText = counts.pendiente;
+    document.getElementById("manager-process").innerText = counts.proceso;
+    document.getElementById("manager-completed").innerText = counts.completada;
+    document.getElementById("manager-canceled").innerText = counts.cancelada;
+}
+
+
+/* =========================================================
+   HISTÓRICO
+========================================================= */
+function openHistoryModal() {
+    renderHistoryView();
+    document.getElementById("history-modal").classList.remove("hidden");
+    document.getElementById("history-modal").classList.add("flex");
+}
+
+function closeHistoryModal() {
+    document.getElementById("history-modal").classList.add("hidden");
+    document.getElementById("history-modal").classList.remove("flex");
+}
+
+function getFilteredHistory() {
+    const search = value("history-search").toLowerCase();
+    const dateVal = value("history-date");
+
+    let completeds = tickets.filter(t => t.status === "completada");
+
+    if (dateVal) {
+        completeds = completeds.filter(t => toLocalISODate(t.completedAt || t.createdAt) === dateVal);
+    }
+
+    if (search) {
+        completeds = completeds.filter(t =>
+            (t.cliente && t.cliente.toLowerCase().includes(search)) ||
+            (t.tipo && t.tipo.toLowerCase().includes(search)) ||
+            (t.ticketNumber && t.ticketNumber.toLowerCase().includes(search)) ||
+            (t.requester && displayUser(t.requester).toLowerCase().includes(search)) ||
+            (t.movedBy && displayUser(t.movedBy).toLowerCase().includes(search)) ||
+            (t.completedBy && displayUser(t.completedBy).toLowerCase().includes(search))
+        );
+    }
+
+    completeds.sort((a, b) => new Date(b.completedAt || b.createdAt) - new Date(a.completedAt || a.createdAt));
+    return completeds;
+}
+
+function renderHistoryView() {
+    const tbody = document.getElementById("history-table-body");
+    const completeds = getFilteredHistory();
+
+    tbody.innerHTML = "";
+
+    if (!completeds.length) {
+        tbody.innerHTML = `<tr><td colspan="8" class="p-8 text-center text-xs text-slate-400">No hay tickets completados en este archivo histórico.</td></tr>`;
+        return;
+    }
+
+    completeds.forEach(t => {
+        const tr = document.createElement("tr");
+        tr.className = "border-b border-slate-100 hover:bg-slate-50 text-xs";
+        tr.innerHTML = `
+            <td class="px-4 py-3 font-bold text-slate-800">#${t.id}<br><span class="font-normal text-[10px] text-slate-400">${formatDate(t.createdAt)}</span></td>
+            <td class="px-4 py-3 font-semibold text-indigo-700">${escapeHtml(t.tipo)}</td>
+            <td class="px-4 py-3 font-medium text-slate-700">${escapeHtml(t.cliente)}</td>
+            <td class="px-4 py-3 text-slate-600">${escapeHtml(t.requester ? displayUser(t.requester) : "—")}</td>
+            <td class="px-4 py-3">
+                <span class="font-bold text-blue-700">${escapeHtml(t.movedBy ? displayUser(t.movedBy) : "—")}</span>
+                ${t.movedAt ? `<br><span class="text-[10px] text-slate-400">${formatDateTime(t.movedAt)}</span>` : ""}
+            </td>
+            <td class="px-4 py-3">
+                <span class="font-bold text-emerald-700">${escapeHtml(t.completedBy ? displayUser(t.completedBy) : "—")}</span>
+                ${t.completedAt ? `<br><span class="text-[10px] text-slate-400">${formatDateTime(t.completedAt)}</span>` : ""}
+            </td>
+            <td class="px-4 py-3 font-extrabold text-emerald-700">${escapeHtml(t.ticketNumber || "—")}</td>
+            <td class="px-4 py-3 text-right">
+                <button onclick="openDetailModal(${t.id})" class="px-2.5 py-1 bg-slate-100 hover:bg-indigo-50 text-indigo-600 rounded-lg font-bold">Detalle</button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+
+/* =========================================================
+   DRAG & DROP + MOVER TARJETAS
+========================================================= */
+function allowDrop(e) {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+}
+
+function dragEnter(e) {
+    e.preventDefault();
+    const col = e.currentTarget;
+    if (col) col.classList.add("drag-over");
+}
+
+function dragLeave(e) {
+    const col = e.currentTarget;
+    if (col && !col.contains(e.relatedTarget)) col.classList.remove("drag-over");
+}
+
+function drag(e, id) {
+    draggedTicketId = id;
+    try {
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", String(id));
+    } catch {}
+    const el = e.currentTarget;
+    if (el) el.classList.add("dragging");
+}
+
+function drop(e, newStatus) {
+    e.preventDefault();
+    document.querySelectorAll(".kanban-col.drag-over").forEach(c => c.classList.remove("drag-over"));
+
+    let id = parseInt(e.dataTransfer ? e.dataTransfer.getData("text/plain") : "");
+    if (!id) id = draggedTicketId;
+    draggedTicketId = null;
+    if (!id) return;
+
+    moveTicket(id, newStatus);
+}
+
+async function moveTicket(id, newStatus) {
+    if (!isManager()) return;
+    const ticket = tickets.find(t => t.id === id);
+    if (!ticket || ticket.status === newStatus) return;
+    const assignedToMe = sameUser(ticket.assignedCAC, currentUser) || sameUser(ticket.movedBy, currentUser);
+    if (!isAdmin() && (ticket.status === "completada" || ticket.status === "cancelada") && newStatus === "proceso") {
+        showCustomAlert("Las solicitudes completadas o canceladas no pueden reabrirse desde CAC. Contacta al administrador si necesitas corregir el estado.", "Acción no permitida", "error");
+        return;
+    }
+    if (!isAdmin() && newStatus !== "proceso" && !assignedToMe) {
+        showCustomAlert("Solo el CAC que tomó esta solicitud o el administrador puede cambiarla a completada, cancelada o pendiente.", "Acción no permitida", "error");
+        return;
+    }
+
+    // =========================
+    // COMPLETAR
+    // =========================
+    if (newStatus === "completada") {
+        ticketBeingCompleted = ticket.id;
+
+        document.getElementById("completion-ticket-number").value = "";
+
+        document.getElementById("complete-modal").classList.remove("hidden");
+        document.getElementById("complete-modal").classList.add("flex");
+
+        return;
+    }
+
+    // =========================
+    // CANCELAR
+    // =========================
+    if (newStatus === "cancelada") {
+        openCancelModal(ticket.id);
+        return;
+    }
+
+    // Bloquea recargas concurrentes para que el estado anterior no reaparezca visualmente.
+    if (pendingTicketWrites.has(ticket.id)) return;
+    pendingTicketWrites.add(ticket.id);
+
+    const backup = JSON.parse(JSON.stringify(ticket));
+    const previousStatus = ticket.status;
+    const movementAt = new Date().toISOString();
+
+    // Cambiar estado local
+    ticket.status = newStatus;
+    ticket.movedBy = currentUser;
+    ticket.movedAt = movementAt;
+    if (newStatus === "proceso") {
+        ticket.assignedCAC = currentUser;
+        ticket.assignedCACAt = movementAt;
+    }
+
+    // Historial
+    if (!Array.isArray(ticket.movementHistory)) {
+        ticket.movementHistory = [];
+    }
+
+    ticket.movementHistory.push({
+        fromStatus: previousStatus,
+        toStatus: newStatus,
+        movedBy: currentUser,
+        movedAt: movementAt
+    });
+
+    // Actualización optimista: la tarjeta cambia inmediatamente, sin esperar la red.
+    renderCurrent();
+
+    try {
+        // Persiste después de actualizar la interfaz para que el arrastre se sienta inmediato.
+        await persistTicket(ticket);
+        notifyChange();
+    } catch (err) {
+        console.error("❌ Error guardando cambio de estado:", err);
+
+        // Restaurar estado anterior si falla el guardado
+        Object.assign(ticket, backup);
+
+        showCustomAlert(
+            "No se pudo guardar el cambio de estado.\n\nDetalle: " + errMsg(err),
+            "Error al Guardar",
+            "error"
+        );
+    } finally {
+        pendingTicketWrites.delete(ticket.id);
+        renderCurrent();
+    }
+
+}
+
+
+/* =========================================================
+   CANCELACIÓN
+========================================================= */
+function openCancelModal(id) {
+    ticketBeingCanceled = id;
+    document.getElementById("cancel-reason").value = "";
+    document.getElementById("cancel-modal").classList.remove("hidden");
+    document.getElementById("cancel-modal").classList.add("flex");
+}
+
+function closeCancelModal() {
+    ticketBeingCanceled = null;
+    document.getElementById("cancel-modal").classList.add("hidden");
+    document.getElementById("cancel-modal").classList.remove("flex");
+}
+
+async function confirmCancelRequest() {
+    const reason = value("cancel-reason");
+    if (!reason) {
+        showCustomAlert("Debes ingresar el motivo de la cancelación.", "Motivo Requerido", "info");
+        return;
+    }
+
+    const ticket = tickets.find(t => t.id === ticketBeingCanceled);
+    if (!ticket) {
+        closeCancelModal();
+        return;
+    }
+
+    if (!isAdmin() && !sameUser(ticket.assignedCAC, currentUser) && !sameUser(ticket.movedBy, currentUser)) {
+        closeCancelModal();
+        showCustomAlert("Solo el CAC que tomó esta solicitud o el administrador puede cancelarla.", "Acción no permitida", "error");
+        return;
+    }
+    const backup = JSON.parse(JSON.stringify(ticket));
+    const previousStatus = ticket.status;
+    const canceledAt = new Date().toISOString();
+
+    ticket.status = "cancelada";
+    ticket.cancelReason = formatTitleCase(reason);
+    ticket.canceledBy = currentUser;
+    ticket.canceledAt = canceledAt;
+    ticket.movedBy = currentUser;
+    ticket.movedAt = canceledAt;
+
+    if (!Array.isArray(ticket.movementHistory)) ticket.movementHistory = [];
+    ticket.movementHistory.push({
+        fromStatus: previousStatus,
+        toStatus: "cancelada",
+        movedBy: currentUser,
+        movedAt: canceledAt,
+        action: "cancelacion"
+    });
+
+    try {
+        await persistTicket(ticket);
+        notifyChange();
+    } catch (err) {
+        console.error(err);
+        Object.assign(ticket, backup);
+        closeCancelModal();
+        renderCurrent();
+        showCustomAlert("No se pudo guardar la cancelación.\n\nDetalle: " + errMsg(err), "Error al Guardar", "error");
+        return;
+    }
+
+    const id = ticket.id;
+    closeCancelModal();
+    renderCurrent();
+    showCustomAlert(`La solicitud #${id} ha sido cancelada correctamente.`, "Solicitud Cancelada", "info");
+}
+
+
+/* =========================================================
+   PASO A PASO Y CAMPOS DINÁMICOS
+========================================================= */
+function openRequestModal() {
+    if (!isRequester()) {
+        showCustomAlert("Este formulario está reservado para los ejecutivos y solicitantes.", "Acceso Restringido", "error");
+        return;
+    }
+
+    setRequestModalMode(null);
+    selectedOrderType = "";
+    document.getElementById("request-form").reset();
+    document.getElementById("step1-tipo-orden").value = "";
+
+    const reportaInput = document.getElementById("f-reporta");
+    if (reportaInput) {
+        reportaInput.value = formatTitleCase(USERS[currentUser].name);
+    }
+
+    backToStep1();
+
+    document.getElementById("request-modal").classList.remove("hidden");
+    document.getElementById("request-modal").classList.add("flex");
+}
+
+function closeRequestModal() {
+    document.getElementById("request-modal").classList.add("hidden");
+    document.getElementById("request-modal").classList.remove("flex");
+    setRequestModalMode(null);
+}
+
+// null = nueva solicitud · número = editando esa solicitud
+function setRequestModalMode(ticketId) {
+    clearPendingEvidencias();
+    editingTicketId = ticketId;
+    const isEdit = ticketId !== null;
+    const kicker = document.getElementById("request-modal-kicker");
+    if (kicker) kicker.innerText = isEdit ? `Editar solicitud #${ticketId}` : "Nueva solicitud";
+    const btn = document.getElementById("btn-submit-request");
+    if (btn) btn.innerHTML = `<span>${isEdit ? "Guardar cambios" : "Registrar solicitud"}</span>`;
+    const box = document.getElementById("edit-evidencias-box");
+    if (box && !isEdit) { box.classList.add("hidden"); editEvidenciasKeep = []; }
+}
+
+/* =========================================================
+   EDITAR SOLICITUD (lado TDM)
+========================================================= */
+function setVal(id, v) {
+    const el = document.getElementById(id);
+    if (el) el.value = v == null ? "" : v;
+}
+
+function renderEditEvidencias() {
+    const box = document.getElementById("edit-evidencias-box");
+    const list = document.getElementById("edit-evidencias-list");
+    if (!box || !list) return;
+    if (!editEvidenciasKeep.length) { box.classList.add("hidden"); list.innerHTML = ""; return; }
+    box.classList.remove("hidden");
+    list.innerHTML = editEvidenciasKeep.map((ev, i) => `
+        <div class="border border-slate-200 rounded-xl p-2 bg-slate-50 text-center">
+            ${evThumbHtml(ev, `openEditEvidenciaView(${i})`, "h-24")}
+            <p class="text-[10px] text-slate-500 truncate">${escapeHtml(ev.name)}</p>
+            <button type="button" onclick="removeEditEvidencia(${i})" class="mt-1 text-[11px] font-bold text-rose-600 hover:underline">
+                <i class="fa-solid fa-trash mr-1"></i>Quitar
+            </button>
+        </div>`).join("");
+}
+
+function openEditEvidenciaView(i) {
+    openLightboxList(editEvidenciasKeep, i, editingTicketId ? `Solicitud #${editingTicketId}` : "Evidencias");
+}
+
+function removeEditEvidencia(i) {
+    editEvidenciasKeep.splice(i, 1);
+    renderEditEvidencias();
+}
+
+function openEditModal(id) {
+    const t = tickets.find(x => x.id === id);
+    if (!t) return;
+
+    if (!canRequesterEdit(t)) {
+        const motivo = !isRequester() || !isOwnerOf(t)
+            ? "Solo quien creó la solicitud puede editarla."
+            : t.status === "proceso"
+                ? "Esta solicitud está en proceso. Pídele al CAC que te dé acceso para editarla."
+                : "Esta solicitud ya no se puede editar.";
+        showCustomAlert(motivo, "Edición no disponible", "info");
+        return;
+    }
+
+    closeDetailModal();
+    document.getElementById("request-form").reset();
+    setRequestModalMode(t.id);
+
+    selectedOrderType = t.tipo;
+    document.getElementById("step1-tipo-orden").value = t.tipo;
+    document.getElementById("display-selected-type").innerText = t.tipo;
+    setupDynamicFields(t.tipo);
+
+    setVal("f-accion", t.accion);
+    setVal("f-cliente", t.cliente);
+    setVal("f-sucursal", t.sucursal);
+    setVal("f-prioridad", t.prioridad || "Normal");
+    setVal("f-recibe", t.recibe);
+    setVal("f-contacto", t.contacto);
+    setVal("f-fecha-recepcion", t.fechaRecepcion);
+    setVal("f-reporta", t.reporta);
+    setVal("f-modelo-actual", t.modeloActual);
+    setVal("f-serial-actual", t.serialActual);
+    setVal("f-modelo", t.modeloNuevo);
+    setVal("f-serial", t.serialNuevo);
+    setVal("f-facturacion", t.facturacion);
+    setVal("f-tipo-mantenimiento", t.tipoMantenimiento);
+    setVal("f-usuarios-afectados", t.usuariosAfectados);
+    setVal("f-escaneo", t.escaneo);
+    setVal("f-cantidad-usuarios", t.cantidadUsuarios);
+    setVal("f-conectividad", t.conectividad);
+    setVal("f-incluye-instalacion", t.incluyeInstalacion);
+    setVal("f-departamento", t.departamento);
+    setVal("f-ultima-reparacion", t.ultimaReparacion);
+    setVal("f-notas", t.notas);
+    const dl = document.getElementById("f-delivery");
+    if (dl) dl.checked = !!t.delivery;
+
+    editEvidenciasKeep = (t.evidencias || []).map(e => ({ ...e }));
+    renderEditEvidencias();
+
+    document.getElementById("step-1-container").classList.add("hidden");
+    document.getElementById("request-form").classList.remove("hidden");
+    document.getElementById("modal-step-title").innerText = "Editar datos del requerimiento";
+    document.getElementById("modal-step-subtitle").innerText = "Modifica lo necesario. Quedará registrado que la solicitud fue editada.";
+
+    document.getElementById("request-modal").classList.remove("hidden");
+    document.getElementById("request-modal").classList.add("flex");
+}
+
+async function executeSaveEdit() {
+    const submitBtn = document.getElementById("btn-submit-request");
+    if (submitBtn) {
+        if (submitBtn.disabled) return;
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `<span>Guardando...</span> <i class="fa-solid fa-spinner fa-spin text-xs"></i>`;
+    }
+
+    const ticketId = editingTicketId;
+    let backup = null;
+
+    try {
+        // Se relee para confirmar que el estado/acceso no cambió mientras editaba
+        await reloadTickets();
+        const ticket = tickets.find(t => t.id === ticketId);
+
+        if (!ticket || !canRequesterEdit(ticket)) {
+            closeRequestModal();
+            renderCurrent();
+            showCustomAlert("Ya no tienes permiso para editar esta solicitud (cambió de estado o se cerró el acceso). No se guardó ningún cambio.", "Edición no permitida", "error");
+            return;
+        }
+
+        const nuevasEvidencias = await buildEvidenciasFromPending();
+        const evidencias = [...editEvidenciasKeep, ...nuevasEvidencias];
+
+        const checkDelivery = document.getElementById("f-delivery");
+        const nuevos = {
+            tipo: selectedOrderType,
+            accion: formatTitleCase(value("f-accion")),
+            cliente: formatTitleCase(value("f-cliente")),
+            sucursal: formatTitleCase(value("f-sucursal")),
+            prioridad: value("f-prioridad") || "Normal",
+            recibe: formatTitleCase(value("f-recibe")),
+            contacto: value("f-contacto"),
+            fechaRecepcion: value("f-fecha-recepcion"),
+            reporta: formatTitleCase(value("f-reporta") || USERS[currentUser].name),
+            modeloActual: value("f-modelo-actual").toUpperCase(),
+            serialActual: value("f-serial-actual").toUpperCase(),
+            modeloNuevo: value("f-modelo").toUpperCase(),
+            serialNuevo: value("f-serial").toUpperCase(),
+            facturacion: value("f-facturacion"),
+            tipoMantenimiento: value("f-tipo-mantenimiento"),
+            usuariosAfectados: value("f-usuarios-afectados"),
+            escaneo: value("f-escaneo"),
+            cantidadUsuarios: value("f-cantidad-usuarios"),
+            conectividad: value("f-conectividad"),
+            incluyeInstalacion: value("f-incluye-instalacion"),
+            departamento: formatTitleCase(value("f-departamento")),
+            ultimaReparacion: value("f-ultima-reparacion"),
+            delivery: checkDelivery ? checkDelivery.checked : false,
+            notas: value("f-notas")
+        };
+
+        // Qué cambió exactamente
+        const changes = [];
+        EDIT_FIELDS.forEach(([key, label]) => {
+            const antes = ticket[key] === undefined || ticket[key] === null ? "" : ticket[key];
+            const despues = nuevos[key];
+            if (String(antes) !== String(despues)) {
+                changes.push({
+                    field: label,
+                    from: key === "delivery" ? (antes ? "Sí" : "No") : String(antes),
+                    to: key === "delivery" ? (despues ? "Sí" : "No") : String(despues)
+                });
+            }
+        });
+        const quitadas = (ticket.evidencias || []).length - editEvidenciasKeep.length;
+        if (quitadas > 0) changes.push({ field: "Evidencias", from: "", to: `${quitadas} eliminada(s)` });
+        if (nuevasEvidencias.length) changes.push({ field: "Evidencias", from: "", to: `${nuevasEvidencias.length} agregada(s)` });
+
+        if (!changes.length) {
+            showCustomAlert("No hiciste ningún cambio en la solicitud.", "Sin cambios", "info");
+            return;
+        }
+
+        backup = JSON.parse(JSON.stringify(ticket));
+        const editedAt = new Date().toISOString();
+        const consumioAcceso = ticket.status === "proceso" && EDIT_ACCESS_ONE_TIME;
+
+        Object.assign(ticket, nuevos, { evidencias });
+        ticket.edited = true;
+        ticket.editCount = (ticket.editCount || 0) + 1;
+        ticket.lastEditedBy = currentUser;
+        ticket.lastEditedAt = editedAt;
+        if (!Array.isArray(ticket.editHistory)) ticket.editHistory = [];
+        ticket.editHistory.push({
+            type: "edicion",
+            by: currentUser,
+            at: editedAt,
+            statusAtEdit: ticket.status,
+            changes
+        });
+        if (consumioAcceso) {
+            ticket.editAccess = { ...(ticket.editAccess || {}), granted: false, closedAt: editedAt, closedReason: "usado" };
+        }
+
+        try {
+            await persistTicket(ticket);
+        } catch (err) {
+            Object.assign(ticket, backup);
+            throw err;
+        }
+        notifyChange();
+
+        document.getElementById("request-form").reset();
+        closeRequestModal();
+        renderCurrent();
+        showCustomAlert(`La solicitud #${ticket.id} se actualizó correctamente. Quedó marcada como editada para el equipo CAC.`, "Solicitud Editada", "success");
+
+    } catch (error) {
+        console.error("Error al guardar edición:", error);
+        showCustomAlert("No se pudieron guardar los cambios.\n\nDetalle: " + errMsg(error), "Error al Guardar", "error");
+    } finally {
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = `<span>${editingTicketId !== null ? "Guardar cambios" : "Registrar solicitud"}</span>`;
+        }
+    }
+}
+
+/* =========================================================
+   DAR / QUITAR ACCESO DE EDICIÓN (lado CAC)
+========================================================= */
+async function toggleEditAccess(id) {
+    if (!isManager()) return;
+    const ticket = tickets.find(t => t.id === id);
+    if (!ticket) return;
+
+    if (ticket.status !== "proceso") {
+        showCustomAlert("El acceso de edición solo se da a órdenes en proceso. Las pendientes ya son editables por el TDM.", "No aplica", "info");
+        return;
+    }
+
+    const backup = JSON.parse(JSON.stringify(ticket));
+    const now = new Date().toISOString();
+    const dar = !hasEditAccess(ticket);
+
+    ticket.editAccess = dar
+        ? { granted: true, grantedBy: currentUser, grantedAt: now }
+        : { ...(ticket.editAccess || {}), granted: false, closedAt: now, closedReason: "revocado" };
+
+    if (!Array.isArray(ticket.editHistory)) ticket.editHistory = [];
+    ticket.editHistory.push({ type: dar ? "acceso_otorgado" : "acceso_revocado", by: currentUser, at: now });
+
+    try {
+        await persistTicket(ticket);
+        notifyChange();
+    } catch (err) {
+        console.error(err);
+        Object.assign(ticket, backup);
+        showCustomAlert("No se pudo cambiar el acceso de edición.\n\nDetalle: " + errMsg(err), "Error al Guardar", "error");
+    }
+
+    renderCurrent();
+    if (!document.getElementById("detail-modal").classList.contains("hidden")) openDetailModal(id);
+}
+
+function backToStep1() {
+    document.getElementById("step-1-container").classList.remove("hidden");
+    document.getElementById("request-form").classList.add("hidden");
+
+    document.getElementById("modal-step-title").innerText = "Paso 1: Tipo de Solicitud";
+    document.getElementById("modal-step-subtitle").innerText = "Selecciona el tipo de orden para continuar con los datos requeridos.";
+}
+
+function goToStep2() {
+    const val = document.getElementById("step1-tipo-orden").value;
+    if (!val) {
+        showCustomAlert("Por favor selecciona un tipo de solicitud antes de continuar.", "Campo Requerido", "info");
+        return;
+    }
+
+    selectedOrderType = val;
+    document.getElementById("display-selected-type").innerText = selectedOrderType;
+
+    setupDynamicFields(selectedOrderType);
+
+    document.getElementById("step-1-container").classList.add("hidden");
+    document.getElementById("request-form").classList.remove("hidden");
+
+    document.getElementById("modal-step-title").innerText = "Paso 2: Datos del Requerimiento";
+    document.getElementById("modal-step-subtitle").innerText = "Completa la información específica para esta solicitud.";
+}
+
+function setupDynamicFields(type) {
+    const hiddenGroups = [
+        "grp-modelo-actual", "grp-serial-actual", "grp-modelo-nuevo", "grp-serial-nuevo",
+        "grp-recibe", "grp-fecha-recepcion", "grp-facturacion", "grp-tipo-mantenimiento",
+        "grp-usuarios-afectados", "grp-tipo-escaneo", "grp-cantidad-usuarios",
+        "grp-conectividad", "grp-incluye-instalacion", "grp-departamento",
+        "grp-ultima-reparacion", "grp-delivery"
+    ];
+
+    hiddenGroups.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add("hidden");
+    });
+
+    document.getElementById("lbl-modelo-nuevo").innerText = "Modelo del Equipo";
+    document.getElementById("lbl-serial-nuevo").innerText = "Serial del Equipo";
+
+    switch (type) {
+        case "SUPERVISIÓN TÉCNICA":
+            showField("grp-recibe");
+            showField("grp-fecha-recepcion");
+            showField("grp-modelo-nuevo");
+            showField("grp-serial-nuevo");
+            break;
+
+        case "REPARACIÓN DE EQUIPO":
+            showField("grp-recibe");
+            showField("grp-fecha-recepcion");
+            showField("grp-modelo-nuevo");
+            showField("grp-serial-nuevo");
+            showField("grp-ultima-reparacion");
+            break;
+
+        case "DIAGNÓSTICO EXTERNO CLIENTE":
+        case "RETIRO DE EQUIPO":
+        case "DEVOLUCIÓN DE EQUIPO":
+            showField("grp-recibe");
+            showField("grp-modelo-nuevo");
+            showField("grp-serial-nuevo");
+            break;
+
+        case "LEVANTAMIENTO":
+            showField("grp-recibe");
+            break;
+
+        case "ENVÍO AL INTERIOR":
+            showField("grp-recibe");
+            showField("grp-fecha-recepcion");
+            showField("grp-conectividad");
+            break;
+
+        case "ENVÍO AL INTERIOR DEL PAÍS":
+            hideField("grp-recibe");
+            hideField("grp-fecha-recepcion");
+            break;
+
+        case "NUEVA INSTALACIÓN":
+            showField("grp-recibe");
+            showField("grp-modelo-actual");
+            showField("grp-serial-actual");
+            document.getElementById("grp-modelo-actual").querySelector('label').innerText = "Modelo a Instalar";
+            document.getElementById("grp-serial-actual").querySelector('label').innerText = "Serial a Instalar";
+            showField("grp-modelo-nuevo");
+            showField("grp-serial-nuevo");
+            document.getElementById("lbl-modelo-nuevo").innerText = "Modelo del Equipo Anterior (si aplica)";
+            document.getElementById("lbl-serial-nuevo").innerText = "Serial del Equipo Anterior (si aplica)";
+
+            showField("grp-cantidad-usuarios");
+            showField("grp-conectividad");
+            showField("grp-incluye-instalacion");
+            showField("grp-departamento");
+            break;
+
+        case "CAMBIO DE EQUIPO":
+            showField("grp-recibe");
+            showField("grp-modelo-actual");
+            showField("grp-serial-actual");
+            document.getElementById("grp-modelo-actual").querySelector('label').innerText = "Modelo del Equipo Actual";
+            document.getElementById("grp-serial-actual").querySelector('label').innerText = "Serial del Equipo Actual";
+            showField("grp-modelo-nuevo");
+            showField("grp-serial-nuevo");
+            document.getElementById("lbl-modelo-nuevo").innerText = "Modelo Por el que se Cambiará";
+            document.getElementById("lbl-serial-nuevo").innerText = "Serial del Equipo Nuevo/Cambio";
+
+            showField("grp-cantidad-usuarios");
+            showField("grp-conectividad");
+            showField("grp-departamento");
+            break;
+
+        case "SOPORTE TÉCNICO":
+            showField("grp-recibe");
+            showField("grp-modelo-nuevo");
+            showField("grp-serial-nuevo");
+            showField("grp-usuarios-afectados");
+            showField("grp-conectividad");
+            showField("grp-departamento");
+            break;
+
+        case "SOPORTE REMOTO":
+            hideField("grp-recibe");
+            hideField("grp-fecha-recepcion");
+            showField("grp-modelo-nuevo");
+            showField("grp-serial-nuevo");
+            showField("grp-usuarios-afectados");
+            showField("grp-conectividad");
+            showField("grp-tipo-escaneo");
+            showField("grp-cantidad-usuarios");
+            showField("grp-departamento");
+            break;
+
+        case "MANTENIMIENTO":
+            showField("grp-recibe");
+            showField("grp-modelo-nuevo");
+            showField("grp-serial-nuevo");
+            showField("grp-tipo-mantenimiento");
+            showField("grp-cantidad-usuarios");
+            showField("grp-conectividad");
+            showField("grp-departamento");
+            break;
+
+        case "MENSAJERÍA":
+            showField("grp-recibe");
+            showField("grp-facturacion");
+            break;
+
+        case "VENTA DIRECTA":
+            showField("grp-recibe");
+            showField("grp-delivery");
+            showField("grp-facturacion");
+            break;
+
+        default:
+            showField("grp-recibe");
+            break;
+    }
+}
+
+function showField(groupId) {
+    const el = document.getElementById(groupId);
+    if (el) el.classList.remove("hidden");
+}
+
+function hideField(groupId) {
+    const el = document.getElementById(groupId);
+    if (el) el.classList.add("hidden");
+}
+
+
+/* =========================================================
+   REGISTRO DE SOLICITUD
+========================================================= */
+async function handleCreateRequest(e) {
+    e.preventDefault();
+
+    if (!isRequester()) {
+        showCustomAlert("No tienes permiso para registrar solicitudes.", "Sin Autorización", "error");
+        return;
+    }
+
+    const requiereSerialStrict = [
+        "CAMBIO DE EQUIPO",
+        "DEVOLUCIÓN DE EQUIPO",
+        "DIAGNÓSTICO EXTERNO CLIENTE",
+        "MANTENIMIENTO",
+        "REPARACIÓN DE EQUIPO",
+        "SOPORTE REMOTO",
+        "SOPORTE TÉCNICO",
+        "SUPERVISIÓN TÉCNICA"
+    ];
+
+    const esObligatorioSerial = requiereSerialStrict.includes(selectedOrderType);
+
+    const modNuevo = value("f-modelo");
+    const serNuevo = value("f-serial");
+    const modActual = value("f-modelo-actual");
+    const serActual = value("f-serial-actual");
+
+    const faltanEquipos = (!modNuevo && !modActual) || (!serNuevo && !serActual);
+
+    if (esObligatorioSerial && faltanEquipos) {
+        showEquipmentConfirmModal(
+            () => { /* volver a completar */ },
+            () => { executeSaveRequest(); }
+        );
+    } else {
+        executeSaveRequest();
+    }
+}
+
+// Reduce el tamaño de la foto para que quepa sin problema en el almacenamiento
+function compressImage(file, maxSide = 1600, quality = 0.82) {
+    return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+            let w = img.naturalWidth, h = img.naturalHeight;
+            const scale = Math.min(1, maxSide / Math.max(w, h));
+            w = Math.max(1, Math.round(w * scale));
+            h = Math.max(1, Math.round(h * scale));
+            const canvas = document.createElement("canvas");
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext("2d");
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(0, 0, w, h);
+            ctx.drawImage(img, 0, 0, w, h);
+            URL.revokeObjectURL(url);
+            resolve(canvas.toDataURL("image/jpeg", quality));
+        };
+        img.onerror = () => {
+            URL.revokeObjectURL(url);
+            readFileAsDataURL(file).then(resolve, reject);
+        };
+        img.src = url;
+    });
+}
+
+async function executeSaveRequest() {
+    if (editingTicketId !== null) return executeSaveEdit();
+
+    const submitBtn = document.getElementById("btn-submit-request");
+    if (submitBtn) {
+        if (submitBtn.disabled) return;
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `<span>Guardando...</span> <i class="fa-solid fa-spinner fa-spin text-xs"></i>`;
+    }
+
+    try {
+        const evidencias = await buildEvidenciasFromPending();
+
+        // Releer para obtener un ID único aunque otro usuario haya creado tickets
+        await reloadTickets();
+        const newId = tickets.length ? Math.max(...tickets.map(t => Number(t.id))) + 1 : 1;
+
+        const reportaNombre = formatTitleCase(value("f-reporta") || USERS[currentUser].name);
+        const checkDelivery = document.getElementById("f-delivery");
+
+        const newTicket = {
+            id: newId,
+            createdAt: new Date().toISOString(),
+            status: "pendiente",
+            tipo: selectedOrderType,
+            accion: formatTitleCase(value("f-accion")),
+
+            cliente: formatTitleCase(value("f-cliente")),
+            sucursal: formatTitleCase(value("f-sucursal")),
+            prioridad: value("f-prioridad") || "Normal",
+            recibe: formatTitleCase(value("f-recibe")),
+            contacto: value("f-contacto"),
+            fechaRecepcion: value("f-fecha-recepcion"),
+            reporta: reportaNombre,
+            requester: currentUser,
+            assignedCAC: "",
+            assignedCACAt: "",
+
+            modeloActual: value("f-modelo-actual").toUpperCase(),
+            serialActual: value("f-serial-actual").toUpperCase(),
+            modeloNuevo: value("f-modelo").toUpperCase(),
+            serialNuevo: value("f-serial").toUpperCase(),
+
+            facturacion: value("f-facturacion"),
+            tipoMantenimiento: value("f-tipo-mantenimiento"),
+            usuariosAfectados: value("f-usuarios-afectados"),
+            escaneo: value("f-escaneo"),
+            cantidadUsuarios: value("f-cantidad-usuarios"),
+            conectividad: value("f-conectividad"),
+            incluyeInstalacion: value("f-incluye-instalacion"),
+            departamento: formatTitleCase(value("f-departamento")),
+            ultimaReparacion: value("f-ultima-reparacion"),
+            delivery: checkDelivery ? checkDelivery.checked : false,
+
+            notas: value("f-notas"),
+            evidencias,
+
+            movedBy: "",
+            movedAt: "",
+            movementHistory: [],
+            edited: false,
+            editCount: 0,
+            editHistory: [],
+            editAccess: { granted: false },
+            ticketNumber: "",
+            completedBy: "",
+            completedAt: "",
+            cancelReason: "",
+            canceledBy: "",
+            canceledAt: ""
+        };
+
+        // Primero se guarda; solo si se guardó bien se agrega a la lista
+        await persistTicket(newTicket, true);
+        tickets.push(newTicket);
+        notifyChange();
+
+        document.getElementById("request-form").reset();
+        closeRequestModal();
+        renderCurrent();
+
+        showCustomAlert(`La solicitud #${newId} (${selectedOrderType}) se ha registrado perfectamente y pasó a la bandeja de pendientes.`, "¡Solicitud Creada Con Éxito!", "success");
+
+    } catch (error) {
+        console.error("Error al guardar ticket:", error);
+        showCustomAlert("No se pudo guardar la solicitud. No se creó ningún registro.\n\nDetalle: " + errMsg(error), "Error al Guardar", "error");
+    } finally {
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = `<span>Registrar solicitud</span>`;
+        }
+    }
+}
+
+
+/* =========================================================
+   COMPLETAR SOLICITUD
+========================================================= */
+function closeCompleteModal() {
+    ticketBeingCompleted = null;
+    document.getElementById("complete-modal").classList.add("hidden");
+    document.getElementById("complete-modal").classList.remove("flex");
+}
+
+async function confirmComplete() {
+    if (!isManager()) return;
+
+    const number = document.getElementById("completion-ticket-number").value.trim().toUpperCase();
+
+    if (!number) {
+        showCustomAlert("Debes ingresar el número de ticket/orden.", "Campo Requerido", "info");
+        return;
+    }
+
+    const ticket = tickets.find(t => t.id === ticketBeingCompleted);
+
+    if (!ticket) {
+        closeCompleteModal();
+        return;
+    }
+
+    if (!isAdmin() && !sameUser(ticket.assignedCAC, currentUser) && !sameUser(ticket.movedBy, currentUser)) {
+        closeCompleteModal();
+        showCustomAlert("Solo el CAC que tomó esta solicitud o el administrador puede completarla.", "Acción no permitida", "error");
+        return;
+    }
+    const backup = JSON.parse(JSON.stringify(ticket));
+    const previousStatus = ticket.status;
+    const completedAt = new Date().toISOString();
+
+    ticket.status = "completada";
+    ticket.ticketNumber = number;
+    ticket.completedBy = currentUser;
+    ticket.completedAt = completedAt;
+    ticket.movedBy = currentUser;
+    ticket.movedAt = completedAt;
+
+    if (!Array.isArray(ticket.movementHistory)) ticket.movementHistory = [];
+    ticket.movementHistory.push({
+        fromStatus: previousStatus,
+        toStatus: "completada",
+        movedBy: currentUser,
+        movedAt: completedAt,
+        action: "completado"
+    });
+
+    try {
+        await persistTicket(ticket);
+        notifyChange();
+    } catch (err) {
+        console.error(err);
+        Object.assign(ticket, backup);
+        closeCompleteModal();
+        renderKanban();
+        showCustomAlert("No se pudo guardar la finalización.\n\nDetalle: " + errMsg(err), "Error al Guardar", "error");
+        return;
+    }
+
+    const id = ticket.id;
+    closeCompleteModal();
+    renderCurrent();
+
+    showCustomAlert(`Solicitud #${id} marcada como completada.\nTicket/Orden: ${number}`, "Solicitud Finalizada", "success");
+}
+
+
+/* =========================================================
+   DETALLE + EVIDENCIAS (VISOR INTERNO Y DESCARGA)
+========================================================= */
+function openDetailModal(id) {
+    const ticket = tickets.find(t => t.id === id);
+    if (!ticket) return;
+
+    const status = statusConfig(ticket.status);
+
+    document.getElementById("detail-kicker").innerText =
+        `Solicitud #${ticket.id} · ${status.label}`;
+
+    document.getElementById("detail-title").innerText =
+        `${ticket.tipo} · ${ticket.cliente}`;
+
+    let galeriaHtml = "";
+    if (ticket.evidencias && ticket.evidencias.length > 0) {
+        galeriaHtml = `
+            <div>
+                <p class="text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-2">
+                    Evidencias Adjuntas (${ticket.evidencias.length}) · clic para ver
+                </p>
+                <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    ${ticket.evidencias.map((ev, i) => `
+                        <div class="border border-slate-200 rounded-xl p-2 bg-slate-50 text-center">
+                            ${evThumbHtml(ev, `openLightbox(${ticket.id}, ${i})`, "h-28")}
+                            <p class="text-[10px] text-slate-500 truncate">${escapeHtml(ev.name)}</p>
+                            <button type="button" onclick="downloadEvidence(${ticket.id}, ${i})" class="mt-1 text-[11px] font-bold text-indigo-600 hover:underline">
+                                <i class="fa-solid fa-download mr-1"></i>Descargar
+                            </button>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>`;
+    } else {
+        galeriaHtml = `<p class="text-xs text-slate-400 italic">No se adjuntaron evidencias.</p>`;
+    }
+
+    document.getElementById("detail-body").innerHTML = `
+        <div class="flex flex-wrap items-center gap-2 mb-5">
+            <span class="px-2.5 py-1 rounded-lg ${status.badge}">
+                <span class="status-dot ${status.dot} mr-1"></span>${status.label}
+            </span>
+            <span class="px-2.5 py-1 rounded-lg text-xs font-bold ${priorityBadge(ticket.prioridad)}">
+                Prioridad: ${escapeHtml(ticket.prioridad || "Normal")}
+            </span>
+            ${ticket.ticketNumber
+                ? `<span class="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 text-xs font-bold">
+                     Ticket/Orden: ${escapeHtml(ticket.ticketNumber)}
+                   </span>`
+                : ""}
+            ${editBadges(ticket)}
+        </div>
+
+        ${canRequesterEdit(ticket) ? `
+            <div class="mb-5">
+                <button type="button" onclick="openEditModal(${ticket.id})" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-sm">
+                    <i class="fa-solid fa-pen-to-square mr-1"></i>Editar solicitud
+                </button>
+            </div>` : ""}
+
+        ${isManager() && ticket.status === "proceso" ? `
+            <div class="mb-5 p-3 rounded-xl bg-violet-50 border border-violet-100 flex flex-wrap items-center justify-between gap-3">
+                <p class="text-xs text-violet-800">
+                    ${hasEditAccess(ticket)
+                        ? "El solicitante tiene acceso para editar esta solicitud."
+                        : "El solicitante no puede editar esta solicitud mientras esté en proceso."}
+                </p>
+                <button type="button" onclick="toggleEditAccess(${ticket.id})" class="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-xs font-bold">
+                    <i class="fa-solid ${hasEditAccess(ticket) ? "fa-lock" : "fa-lock-open"} mr-1"></i>${hasEditAccess(ticket) ? "Quitar acceso de edición" : "Dar acceso para editar"}
+                </button>
+            </div>` : ""}
+
+        ${isOwnerOf(ticket) && ticket.status === "proceso" && !hasEditAccess(ticket) ? `
+            <p class="mb-5 text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-xl p-3">
+                <i class="fa-solid fa-lock mr-1"></i>Esta solicitud está en proceso. Si necesitas modificarla, pídele al CAC que te dé acceso para editar.
+            </p>` : ""}
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
+            ${detailItem("Tipo de Acción", ticket.accion)}
+            ${detailItem("Prioridad", ticket.prioridad)}
+            ${detailItem("Cliente", ticket.cliente)}
+            ${detailItem("Sucursal", ticket.sucursal || "— (sin registrar)")}
+            ${detailItem("Contacto", ticket.contacto)}
+            ${detailItem("Recibe en sucursal", ticket.recibe)}
+            ${ticket.fechaRecepcion ? detailItem("Fecha recepción", ticket.fechaRecepcion) : ""}
+            ${detailItem("Usuario que reporta", ticket.reporta)}
+            ${detailItem("Solicitado por", displayUser(ticket.requester))}
+
+            ${ticket.modeloActual ? detailItem("Modelo Actual / Retiro", ticket.modeloActual) : ""}
+            ${ticket.serialActual ? detailItem("Serial Actual / Retiro", ticket.serialActual) : ""}
+            ${ticket.modeloNuevo ? detailItem("Modelo del Equipo", ticket.modeloNuevo) : ""}
+            ${ticket.serialNuevo ? detailItem("Serial del Equipo", ticket.serialNuevo) : ""}
+
+            ${ticket.facturacion ? detailItem("Tipo de Facturación", ticket.facturacion) : ""}
+            ${ticket.tipoMantenimiento ? detailItem("Mantenimiento", ticket.tipoMantenimiento) : ""}
+            ${ticket.usuariosAfectados ? detailItem("Usuarios Afectados", ticket.usuariosAfectados) : ""}
+            ${ticket.escaneo ? detailItem("Tipo de Escaneo", ticket.escaneo) : ""}
+            ${ticket.cantidadUsuarios ? detailItem("Cantidad de Usuarios", ticket.cantidadUsuarios) : ""}
+            ${ticket.conectividad ? detailItem("Conectividad", ticket.conectividad) : ""}
+            ${ticket.incluyeInstalacion ? detailItem("Incluye Instalación", ticket.incluyeInstalacion) : ""}
+            ${ticket.departamento ? detailItem("Departamento", ticket.departamento) : ""}
+            ${ticket.ultimaReparacion ? detailItem("Última Reparación", ticket.ultimaReparacion) : ""}
+            ${ticket.delivery ? detailItem("Delivery", "Sí incluido") : ""}
+
+            ${ticket.movedBy ? detailItem("Último movimiento por", displayUser(ticket.movedBy)) : ""}
+            ${ticket.movedAt ? detailItem("Fecha del último movimiento", formatDateTime(ticket.movedAt)) : ""}
+            ${ticket.status === "completada" ? detailItem("Completado por", displayUser(ticket.completedBy || ticket.movedBy)) : ""}
+            ${ticket.completedAt ? detailItem("Fecha de completado", formatDateTime(ticket.completedAt)) : ""}
+            ${ticket.status === "cancelada" ? detailItem("Cancelado / eliminado por", displayUser(ticket.canceledBy)) : ""}
+            ${ticket.status === "cancelada" ? detailItem("Fecha de cancelación / eliminación", formatDateTime(ticket.canceledAt)) : ""}
+            ${ticket.status === "cancelada" ? detailItem("Motivo Cancelación", ticket.cancelReason) : ""}
+        </div>
+
+        ${Array.isArray(ticket.movementHistory) && ticket.movementHistory.length ? `
+            <div class="mb-5">
+                <p class="text-[10px] uppercase tracking-wider font-bold text-slate-400 mb-2">Historial de movimientos</p>
+                <div class="space-y-2">
+                    ${ticket.movementHistory.slice().reverse().map(m => `
+                        <div class="flex items-start gap-3 bg-slate-50 border border-slate-100 rounded-xl p-3">
+                            <div class="w-7 h-7 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-indigo-600 shrink-0">
+                                <i class="fa-solid fa-arrow-right-arrow-left text-[10px]"></i>
+                            </div>
+                            <div class="min-w-0">
+                                <p class="text-xs font-bold text-slate-700">
+                                    ${escapeHtml(m.fromStatus || "—")} → ${escapeHtml(m.toStatus || "—")}
+                                </p>
+                                <p class="text-[11px] text-slate-500 mt-0.5">
+                                    Movido por <b>${escapeHtml(displayUser(m.movedBy || "—"))}</b>
+                                    ${m.movedAt ? ` · ${formatDateTime(m.movedAt)}` : ""}
+                                </p>
+                            </div>
+                        </div>
+                    `).join("")}
+                </div>
+            </div>
+        ` : ""}
+
+        ${Array.isArray(ticket.editHistory) && ticket.editHistory.length ? `
+            <div class="mb-5">
+                <p class="text-[10px] uppercase tracking-wider font-bold text-slate-400 mb-2">Historial de ediciones y accesos</p>
+                <div class="space-y-2">
+                    ${ticket.editHistory.slice().reverse().map(h => {
+                        const esEdicion = h.type === "edicion";
+                        const titulo = esEdicion ? "Solicitud editada"
+                            : h.type === "acceso_otorgado" ? "Acceso de edición otorgado"
+                            : "Acceso de edición retirado";
+                        const icono = esEdicion ? "fa-pen" : (h.type === "acceso_otorgado" ? "fa-lock-open" : "fa-lock");
+                        return `
+                        <div class="flex items-start gap-3 bg-amber-50/50 border border-amber-100 rounded-xl p-3">
+                            <div class="w-7 h-7 rounded-lg bg-white border border-amber-200 flex items-center justify-center text-amber-600 shrink-0">
+                                <i class="fa-solid ${icono} text-[10px]"></i>
+                            </div>
+                            <div class="min-w-0">
+                                <p class="text-xs font-bold text-slate-700">${titulo}</p>
+                                <p class="text-[11px] text-slate-500 mt-0.5">
+                                    Por <b>${escapeHtml(displayUser(h.by || "—"))}</b>${h.at ? ` · ${formatDateTime(h.at)}` : ""}
+                                </p>
+                                ${esEdicion && Array.isArray(h.changes) ? `
+                                    <ul class="mt-1.5 space-y-0.5">
+                                        ${h.changes.map(c => `
+                                            <li class="text-[11px] text-slate-600">
+                                                <b>${escapeHtml(c.field)}:</b>
+                                                ${c.from ? `<span class="line-through text-slate-400">${escapeHtml(c.from)}</span> → ` : ""}<span class="font-semibold">${escapeHtml(c.to || "(vacío)")}</span>
+                                            </li>`).join("")}
+                                    </ul>` : ""}
+                            </div>
+                        </div>`;
+                    }).join("")}
+                </div>
+            </div>
+        ` : ""}
+
+        <div class="space-y-4">
+            ${textDetail("Notas / Observaciones", ticket.notas)}
+            ${galeriaHtml}
+        </div>
+    `;
+
+    document.getElementById("detail-modal").classList.remove("hidden");
+    document.getElementById("detail-modal").classList.add("flex");
+}
+
+function closeDetailModal() {
+    document.getElementById("detail-modal").classList.add("hidden");
+    document.getElementById("detail-modal").classList.remove("flex");
+}
+
+function detailItem(label, valueText) {
+    if (!valueText) return "";
+    return `
+        <div class="bg-slate-50 rounded-xl p-3">
+            <p class="text-[10px] uppercase tracking-wider font-bold text-slate-400">${escapeHtml(label)}</p>
+            <p class="text-sm font-semibold text-slate-700 mt-0.5">${escapeHtml(String(valueText))}</p>
+        </div>`;
+}
+
+function textDetail(label, valueText) {
+    return `
+        <div>
+            <p class="text-[10px] uppercase tracking-wider font-bold text-slate-400 mb-1">${escapeHtml(label)}</p>
+            <div class="bg-slate-50 border border-slate-100 rounded-xl p-3 text-sm text-slate-700 whitespace-pre-wrap">
+                ${escapeHtml(String(valueText || "Sin observaciones."))}
+            </div>
+        </div>`;
+}
+
+/* ---------- Visor interno de imágenes ---------- */
+function isLightboxOpen() {
+    return !document.getElementById("lightbox-modal").classList.contains("hidden");
+}
+
+function openLightbox(ticketId, index) {
+    const t = tickets.find(x => x.id === ticketId);
+    if (!t || !t.evidencias || !t.evidencias[index]) return;
+    lbTicketId = ticketId;
+    openLightboxList(t.evidencias, index, `Solicitud #${t.id}`);
+}
+
+function openLightboxList(list, index, label) {
+    if (!Array.isArray(list) || !list[index]) return;
+    lbList = list;
+    lbIndex = index;
+    lbLabel = label || "";
+    renderLightbox();
+    const m = document.getElementById("lightbox-modal");
+    m.classList.remove("hidden");
+    m.classList.add("flex");
+}
+
+function revokeLbBlob() {
+    if (lbBlobUrl) { URL.revokeObjectURL(lbBlobUrl); lbBlobUrl = null; }
+}
+
+async function renderLightbox() {
+    const ev = lbList[lbIndex];
+    if (!ev) return closeLightbox();
+
+    document.getElementById("lb-name").innerText = ev.name || "Evidencia";
+    document.getElementById("lb-counter").innerText = `${lbIndex + 1} / ${lbList.length}${lbLabel ? " · " + lbLabel : ""}`;
+    const multi = lbList.length > 1;
+    document.getElementById("lb-prev").style.display = multi ? "" : "none";
+    document.getElementById("lb-next").style.display = multi ? "" : "none";
+
+    const img = document.getElementById("lb-img");
+    const pdfBox = document.getElementById("lb-pdf-box");
+    const frame = document.getElementById("lb-pdf");
+    const mySeq = ++lbSeq;
+    revokeLbBlob();
+
+    if (isPdfEv(ev)) {
+        img.style.display = "none";
+        img.src = "";
+        pdfBox.classList.remove("hidden");
+        pdfBox.classList.add("flex");
+        frame.src = "about:blank";
+        try {
+            const blob = dataUrlToBlob(ev.data, "application/pdf");
+            if (mySeq !== lbSeq) return;
+            lbBlobUrl = URL.createObjectURL(blob);
+            frame.src = lbBlobUrl;
+        } catch (err) {
+            console.error("No se pudo mostrar el PDF:", err);
+        }
+    } else {
+        pdfBox.classList.add("hidden");
+        pdfBox.classList.remove("flex");
+        frame.src = "about:blank";
+        img.style.display = "";
+        img.src = ev.data;
+    }
+}
+
+function lightboxStep(delta) {
+    if (!lbList.length) return;
+    lbIndex = (lbIndex + delta + lbList.length) % lbList.length;
+    renderLightbox();
+}
+
+function closeLightbox() {
+    const m = document.getElementById("lightbox-modal");
+    m.classList.add("hidden");
+    m.classList.remove("flex");
+    lbSeq++;
+    document.getElementById("lb-img").src = "";
+    document.getElementById("lb-pdf").src = "about:blank";
+    revokeLbBlob();
+    lbList = [];
+}
+
+function openCurrentEvidenceInTab() {
+    const ev = lbList[lbIndex];
+    if (!ev) return;
+    try {
+        const url = URL.createObjectURL(dataUrlToBlob(ev.data, isPdfEv(ev) ? "application/pdf" : null));
+        window.open(url, "_blank");
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err) {
+        console.error(err);
+        showCustomAlert("No se pudo abrir el archivo.", "Error", "error");
+    }
+}
+
+function downloadEvidenceObj(ev, fallbackName) {
+    if (!ev || !ev.data) return;
+    try {
+        const pdf = isPdfEv(ev);
+        const blob = dataUrlToBlob(ev.data, pdf ? "application/pdf" : null);
+        let name = (ev.name || fallbackName || "evidencia").replace(/[\\\/:*?"<>|]+/g, "_");
+        if (pdf && !/\.pdf$/i.test(name)) name = name.replace(/\.[^.]+$/, "") + ".pdf";
+        if (!pdf && !/\.[a-z0-9]{2,5}$/i.test(name)) name += ".jpg";
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = name;
+        a.style.display = "none";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+    } catch (err) {
+        console.error(err);
+        showCustomAlert("No se pudo descargar el archivo.", "Error", "error");
+    }
+}
+
+function downloadEvidence(ticketId, index) {
+    const t = tickets.find(x => x.id === ticketId);
+    const ev = t && t.evidencias && t.evidencias[index];
+    downloadEvidenceObj(ev, `evidencia-${ticketId}-${index + 1}`);
+}
+
+function downloadCurrentEvidence() {
+    downloadEvidenceObj(lbList[lbIndex], "evidencia");
+}
+
+
+/* =========================================================
+   EVIDENCIAS: ARRASTRAR, PEGAR Y SELECCIONAR (IMÁGENES Y PDF)
+========================================================= */
+const MAX_EVIDENCIAS = 10;     // máximo de archivos por solicitud
+const MAX_PDF_MB = 5;          // tamaño máximo por PDF
+let pendingEvidencias = [];    // archivos elegidos que aún no se guardan
+
+function isPdfEv(ev) {
+    if (!ev) return false;
+    if (ev.type === "application/pdf") return true;
+    if (typeof ev.data === "string" && ev.data.startsWith("data:application/pdf")) return true;
+    return /\.pdf$/i.test(ev.name || "");
+}
+
+function isPdfFile(file) {
+    return file.type === "application/pdf" || /\.pdf$/i.test(file.name || "");
+}
+
+function dataUrlToBlob(dataUrl, forceType) {
+    const comma = dataUrl.indexOf(",");
+    const head = dataUrl.slice(0, comma);
+    const body = dataUrl.slice(comma + 1);
+    const mime = forceType || ((head.match(/^data:([^;,]+)/) || [])[1]) || "application/octet-stream";
+    if (/;base64/i.test(head)) {
+        const bin = atob(body);
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        return new Blob([arr], { type: mime });
+    }
+    return new Blob([decodeURIComponent(body)], { type: mime });
+}
+
+// Miniatura clicable: imagen o ícono de PDF
+function evThumbHtml(ev, onclick, h) {
+    if (isPdfEv(ev)) {
+        return `<button type="button" onclick="${onclick}" title="Ver PDF" class="block w-full">
+            <div class="${h} w-full rounded-lg mb-1 bg-rose-50 border border-rose-100 flex flex-col items-center justify-center text-rose-600 hover:bg-rose-100 transition">
+                <i class="fa-solid fa-file-pdf text-3xl"></i>
+                <span class="text-[10px] font-bold mt-1">PDF · clic para ver</span>
+            </div>
+        </button>`;
+    }
+    return `<button type="button" onclick="${onclick}" title="Ver imagen" class="block w-full">
+        <img src="${ev.data}" class="${h} w-full object-cover rounded-lg mb-1 hover:opacity-90 transition">
+    </button>`;
+}
+
+function formatFileSize(bytes) {
+    if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + " MB";
+    return Math.max(1, Math.round(bytes / 1024)) + " KB";
+}
+
+function addPendingFiles(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+
+    const rejected = [];
+    let pastedCount = pendingEvidencias.length;
+
+    for (const file of files) {
+        const total = editEvidenciasKeep.length + pendingEvidencias.length;
+        if (total >= MAX_EVIDENCIAS) {
+            rejected.push(`${file.name || "archivo"}: se alcanzó el máximo de ${MAX_EVIDENCIAS} archivos.`);
+            continue;
+        }
+
+        const pdf = isPdfFile(file);
+        const img = (file.type || "").startsWith("image/");
+        if (!pdf && !img) {
+            rejected.push(`${file.name || "archivo"}: solo se aceptan imágenes y PDF.`);
+            continue;
+        }
+        if (pdf && file.size > MAX_PDF_MB * 1048576) {
+            rejected.push(`${file.name}: el PDF pesa ${formatFileSize(file.size)} (máximo ${MAX_PDF_MB} MB).`);
+            continue;
+        }
+
+        let name = file.name || "";
+        if (!name || /^image\.(png|jpe?g|gif|webp)$/i.test(name)) {
+            pastedCount++;
+            name = `captura-${toLocalISODate(new Date())}-${pastedCount}.png`;
+        }
+
+        pendingEvidencias.push({
+            file,
+            name,
+            kind: pdf ? "pdf" : "image",
+            preview: pdf ? "" : URL.createObjectURL(file)
+        });
+    }
+
+    renderPendingEvidencias();
+
+    if (rejected.length) {
+        showCustomAlert("Algunos archivos no se agregaron:\n\n• " + rejected.join("\n• "), "Archivos no agregados", "info");
+    }
+}
+
+function renderPendingEvidencias() {
+    const box = document.getElementById("pending-evidencias-box");
+    const list = document.getElementById("pending-evidencias-list");
+    if (!box || !list) return;
+    if (!pendingEvidencias.length) { box.classList.add("hidden"); list.innerHTML = ""; return; }
+    box.classList.remove("hidden");
+    list.innerHTML = pendingEvidencias.map((p, i) => `
+        <div class="border border-slate-200 rounded-xl p-2 bg-slate-50 text-center">
+            ${p.kind === "pdf"
+                ? `<div class="h-24 w-full rounded-lg mb-1 bg-rose-50 border border-rose-100 flex flex-col items-center justify-center text-rose-600">
+                       <i class="fa-solid fa-file-pdf text-3xl"></i><span class="text-[10px] font-bold mt-1">PDF</span>
+                   </div>`
+                : `<img src="${p.preview}" class="h-24 w-full object-cover rounded-lg mb-1">`}
+            <p class="text-[10px] text-slate-500 truncate" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</p>
+            <p class="text-[10px] text-slate-400">${formatFileSize(p.file.size)}</p>
+            <button type="button" onclick="removePendingEvidencia(${i})" class="mt-1 text-[11px] font-bold text-rose-600 hover:underline">
+                <i class="fa-solid fa-trash mr-1"></i>Quitar
+            </button>
+        </div>`).join("");
+}
+
+function removePendingEvidencia(i) {
+    const p = pendingEvidencias[i];
+    if (p && p.preview) URL.revokeObjectURL(p.preview);
+    pendingEvidencias.splice(i, 1);
+    renderPendingEvidencias();
+}
+
+function clearPendingEvidencias() {
+    pendingEvidencias.forEach(p => { if (p.preview) URL.revokeObjectURL(p.preview); });
+    pendingEvidencias = [];
+    renderPendingEvidencias();
+    const input = document.getElementById("f-evidencias");
+    if (input) input.value = "";
+}
+
+// Convierte los archivos pendientes en evidencias listas para guardar
+async function buildEvidenciasFromPending() {
+    const result = [];
+    for (const p of pendingEvidencias) {
+        try {
+            if (p.kind === "pdf") {
+                let data = await readFileAsDataURL(p.file);
+                data = data.replace(/^data:[^;,]*/, "data:application/pdf");
+                const name = /\.pdf$/i.test(p.name) ? p.name : p.name.replace(/\.[^.]+$/, "") + ".pdf";
+                result.push({ name, data, type: "application/pdf" });
+            } else {
+                const data = await compressImage(p.file);
+                result.push({ name: p.name.replace(/\.[^.]+$/, "") + ".jpg", data, type: "image/jpeg" });
+            }
+        } catch (err) {
+            console.error("Error leyendo archivo:", err);
+        }
+    }
+    return result;
+}
+
+function dragHasFiles(e) {
+    return !!(e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files"));
+}
+
+function isEvidenceZoneVisible() {
+    const modal = document.getElementById("request-modal");
+    const zone = document.getElementById("evidence-dropzone");
+    return !!modal && !modal.classList.contains("hidden") && !!zone && zone.offsetParent !== null;
+}
+
+function initEvidenceInputs() {
+    const input = document.getElementById("f-evidencias");
+    const zone = document.getElementById("evidence-dropzone");
+    const modal = document.getElementById("request-modal");
+    if (!input || !zone || !modal) return;
+
+    // Seleccionar desde el explorador
+    input.addEventListener("change", () => {
+        addPendingFiles(input.files);
+        input.value = "";
+    });
+
+    // Enter / espacio sobre la zona abre el selector
+    zone.addEventListener("keydown", e => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); }
+    });
+
+    // Arrastrar y soltar dentro del formulario
+    modal.addEventListener("dragover", e => {
+        if (!dragHasFiles(e)) return;
+        e.preventDefault();
+        if (isEvidenceZoneVisible()) zone.classList.add("drag-over");
+    });
+    modal.addEventListener("dragleave", e => {
+        if (!modal.contains(e.relatedTarget)) zone.classList.remove("drag-over");
+    });
+    modal.addEventListener("drop", e => {
+        if (!dragHasFiles(e)) return;
+        e.preventDefault();
+        zone.classList.remove("drag-over");
+        if (isEvidenceZoneVisible()) addPendingFiles(e.dataTransfer.files);
+    });
+
+    // Evita que el navegador abra el archivo si se suelta fuera del formulario
+    window.addEventListener("dragover", e => { if (dragHasFiles(e)) e.preventDefault(); });
+    window.addEventListener("drop", e => { if (dragHasFiles(e)) e.preventDefault(); });
+
+    // Pegar capturas / archivos copiados (Ctrl+V)
+    document.addEventListener("paste", e => {
+        if (!isEvidenceZoneVisible()) return;
+        const items = Array.from((e.clipboardData && e.clipboardData.items) || []);
+        const files = items.filter(it => it.kind === "file").map(it => it.getAsFile()).filter(Boolean);
+        if (!files.length) return;          // si es texto, se pega normal en el campo
+        e.preventDefault();
+        addPendingFiles(files);
+    });
+}
+
+
+/* =========================================================
+   DESCARGAR BD (EXCEL)
+========================================================= */
+function buildExportRows(list) {
+    const dt = v => v ? formatDateTime(v) : "";
+    const du = v => v ? displayUser(v) : "";
+    return list.map(t => ({
+        "No. Solicitud": t.id,
+        "Fecha de solicitud": dt(t.createdAt),
+        "Estatus": statusConfig(t.status).label,
+        "Tipo": t.tipo || "",
+        "Acción": t.accion || "",
+        "Prioridad": t.prioridad || "",
+        "Cliente": t.cliente || "",
+        "Sucursal": t.sucursal || "",
+        "Contacto": t.contacto || "",
+        "Recibe en sucursal": t.recibe || "",
+        "Fecha recepción": t.fechaRecepcion || "",
+        "Usuario que reporta": t.reporta || "",
+        "Solicitado por": du(t.requester),
+        "Modelo actual / retiro": t.modeloActual || "",
+        "Serial actual / retiro": t.serialActual || "",
+        "Modelo del equipo": t.modeloNuevo || "",
+        "Serial del equipo": t.serialNuevo || "",
+        "Facturación": t.facturacion || "",
+        "Mantenimiento": t.tipoMantenimiento || "",
+        "Usuarios afectados": t.usuariosAfectados || "",
+        "Tipo de escaneo": t.escaneo || "",
+        "Cantidad de usuarios": t.cantidadUsuarios || "",
+        "Conectividad": t.conectividad || "",
+        "Incluye instalación": t.incluyeInstalacion || "",
+        "Departamento": t.departamento || "",
+        "Última reparación": t.ultimaReparacion || "",
+        "Delivery": t.delivery ? "Sí" : "No",
+        "Notas": t.notas || "",
+        "No. Ticket / Orden": t.ticketNumber || "",
+        "Último movimiento por": du(t.movedBy),
+        "Fecha último movimiento": dt(t.movedAt),
+        "Completado por": du(t.completedBy),
+        "Fecha completado": dt(t.completedAt),
+        "Cancelado por": du(t.canceledBy),
+        "Fecha cancelación": dt(t.canceledAt),
+        "Motivo cancelación": t.cancelReason || "",
+        "Editada": t.edited ? "Sí" : "No",
+        "Veces editada": t.editCount || 0,
+        "Evidencias adjuntas": (t.evidencias || []).length
+    }));
+}
+
+function triggerBlobDownload(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+function downloadTicketsExport(list, baseName) {
+    if (!list.length) {
+        showCustomAlert("No hay solicitudes para descargar con los filtros actuales.", "Nada que descargar", "info");
+        return;
+    }
+    const rows = buildExportRows(list);
+    const now = new Date();
+    const stamp = toLocalISODate(now) + "_" + String(now.getHours()).padStart(2, "0") + String(now.getMinutes()).padStart(2, "0");
+
+    try {
+        if (!window.XLSX) throw new Error("SheetJS no cargó");
+        const ws = XLSX.utils.json_to_sheet(rows);
+        const headers = Object.keys(rows[0]);
+        ws["!cols"] = headers.map(h => ({
+            wch: Math.min(40, Math.max(h.length + 2, ...rows.map(r => String(r[h] == null ? "" : r[h]).length + 2)))
+        }));
+        ws["!autofilter"] = { ref: ws["!ref"] };
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Solicitudes");
+        XLSX.writeFile(wb, `${baseName}_${stamp}.xlsx`);
+    } catch (err) {
+        // Respaldo: CSV compatible con Excel (UTF-8 con BOM)
+        console.warn("Excel no disponible, se descarga CSV:", err);
+        const headers = Object.keys(rows[0]);
+        const esc = v => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
+        const csv = [headers.map(esc).join(",")]
+            .concat(rows.map(r => headers.map(h => esc(r[h])).join(",")))
+            .join("\r\n");
+        triggerBlobDownload(new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" }), `${baseName}_${stamp}.csv`);
+    }
+}
+
+function exportRequesterBD() {
+    downloadTicketsExport(getRequesterFiltered().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)), "SITODEP_solicitudes");
+}
+
+function exportHistoryBD() {
+    downloadTicketsExport(getFilteredHistory(), "SITODEP_historico_completadas");
+}
+
+
+/* =========================================================
+   HELPERS GENERALES
+========================================================= */
+function value(id) {
+    const el = document.getElementById(id);
+    return el ? el.value.trim() : "";
+}
+
+function readFileAsDataURL(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+}
+
+function formatDate(dateString) {
+    return new Intl.DateTimeFormat("es-DO", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric"
+    }).format(new Date(dateString));
+}
+
+function formatDateTime(dateString) {
+    return new Intl.DateTimeFormat("es-DO", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit"
+    }).format(new Date(dateString));
+}
+
+function statusConfig(status) {
+    const configs = {
+        pendiente:  { label: "Pendiente",  badge: "bg-amber-50 text-amber-700",     dot: "bg-amber-500" },
+        proceso:    { label: "En proceso", badge: "bg-blue-50 text-blue-700",       dot: "bg-blue-500" },
+        completada: { label: "Completada", badge: "bg-emerald-50 text-emerald-700", dot: "bg-emerald-500" },
+        cancelada:  { label: "Cancelada",  badge: "bg-rose-50 text-rose-700",       dot: "bg-rose-500" }
+    };
+    return configs[status] || configs.pendiente;
+}
+
+function escapeHtml(text) {
+    return String(text == null ? "" : text)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+    initEvidenceInputs();
+    try {
+        await initStorage();
+    } catch (err) {
+        console.error("Error inicializando almacenamiento:", err);
+    }
+    checkActiveSession();
+
+    document.addEventListener("keydown", e => {
+        if (isLightboxOpen()) {
+            if (e.key === "Escape") closeLightbox();
+            else if (e.key === "ArrowLeft") lightboxStep(-1);
+            else if (e.key === "ArrowRight") lightboxStep(1);
+            return;
+        }
+        if (e.key !== "Escape") return;
+        closeRequestModal();
+        closeDetailModal();
+        closeCompleteModal();
+        closeCustomAlert();
+        closeCancelModal();
+        closePasswordModal();
+        closeHistoryModal();
+    });
+});
+
+</script>
+
+</body>
+</html>
