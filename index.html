@@ -539,6 +539,7 @@
                     <option value="REPARACIÓN DE EQUIPO">2. REPARACIÓN DE EQUIPO</option>
                     <option value="DIAGNÓSTICO EXTERNO CLIENTE">3. DIAGNÓSTICO EXTERNO CLIENTE</option>
                     <option value="RETIRO DE EQUIPO">4. RETIRO DE EQUIPO</option>
+                    <option value="RETIRO DE DOCUMENTO">4. RETIRO DE DOCUMENTO</option>
                     <option value="DEVOLUCIÓN DE EQUIPO">5. DEVOLUCIÓN DE EQUIPO</option>
                     <option value="LEVANTAMIENTO">6. LEVANTAMIENTO</option>
                     <option value="ENVÍO AL INTERIOR">7. ENVÍO AL INTERIOR</option>
@@ -1053,6 +1054,7 @@ const TDM_USERS = [
     "Natalie",
     "Prueba",
     "Lenisse",
+    "Jose",
     // ... (aquí van los ~50 solicitantes, uno por línea)
 ];
 
@@ -2916,6 +2918,12 @@ function setupDynamicFields(type) {
             showField("grp-tipo-escaneo");
             showField("grp-cantidad-usuarios");
             showField("grp-departamento");
+            break;
+
+        case "RETIRO DE DOCUMENTO":
+            hideField("grp-recribe")
+            hideField("grp-fecha-recepcion");
+            hideField("grp-departamento");
             break;
 
         case "MANTENIMIENTO":
