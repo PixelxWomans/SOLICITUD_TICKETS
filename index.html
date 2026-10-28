@@ -539,6 +539,7 @@
                     <option value="REPARACIÓN DE EQUIPO">2. REPARACIÓN DE EQUIPO</option>
                     <option value="DIAGNÓSTICO EXTERNO CLIENTE">3. DIAGNÓSTICO EXTERNO CLIENTE</option>
                     <option value="RETIRO DE EQUIPO">4. RETIRO DE EQUIPO</option>
+                    <option value="RETIRO DE DOCUMENTO">4. RETIRO DE DOCUMENTO</option>
                     <option value="DEVOLUCIÓN DE EQUIPO">5. DEVOLUCIÓN DE EQUIPO</option>
                     <option value="LEVANTAMIENTO">6. LEVANTAMIENTO</option>
                     <option value="ENVÍO AL INTERIOR">7. ENVÍO AL INTERIOR</option>
@@ -976,60 +977,31 @@
     </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
 <script>
-// API publicada de Google Apps Script (SITODEP).
-const SITODEP_API_URL = "https://script.google.com/macros/s/AKfycbxZi8WonQxryygL2wdEB8LQ0z5NEuKPXnM9OoYwtWEpbJfEOS3f6hj4Ya1lMGoNKYmt/exec";
 
-// Apps Script devuelve las lecturas mediante JSONP para evitar el bloqueo CORS.
-function gasGet(action, params = {}) {
-    return new Promise((resolve, reject) => {
-        const callbackName = "sitodepJsonp_" + Date.now() + "_" + Math.random().toString(36).slice(2);
-        const script = document.createElement("script");
-        const query = new URLSearchParams({ action, ...params, callback: callbackName, _: String(Date.now()) });
-        let finished = false;
-        const cleanup = () => {
-            try { delete window[callbackName]; } catch { window[callbackName] = undefined; }
-            if (script.parentNode) script.parentNode.removeChild(script);
-        };
-        const timeout = setTimeout(() => {
-            if (finished) return;
-            finished = true;
-            cleanup();
-            reject(new Error("Tiempo agotado al consultar Google Sheets. Verifica que la implementación de Apps Script esté actualizada y sea accesible."));
-        }, 20000);
-        window[callbackName] = (data) => {
-            if (finished) return;
-            finished = true;
-            clearTimeout(timeout);
-            cleanup();
-            if (!data || data.ok === false) reject(new Error((data && data.error) || "Google Apps Script devolvió un error."));
-            else resolve(data);
-        };
-        script.onerror = () => {
-            if (finished) return;
-            finished = true;
-            clearTimeout(timeout);
-            cleanup();
-            reject(new Error("No se pudo acceder a Google Apps Script. Revisa el despliegue de la aplicación web."));
-        };
-        script.src = SITODEP_API_URL + "?" + query.toString();
-        document.head.appendChild(script);
-    });
-}
+    const SUPABASE_URL = "https://hhwttqvkszlbspcizwxc.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_uL9NT0fyq5Lf18OyiwU_vw_tp7h1LDx";
 
-// POST simple (text/plain) evita la solicitud CORS preflight desde GitHub Pages.
-// La respuesta no se puede leer desde otro dominio; por eso verificamos luego con una lectura JSONP.
-async function gasPost(action, payload = {}) {
-    await fetch(SITODEP_API_URL, {
-        method: "POST",
-        mode: "no-cors",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ action, ...payload })
-    });
-}
+const supabaseClient = window.supabase.createClient(
+    SUPABASE_URL,
+    SUPABASE_PUBLISHABLE_KEY
+);
 
-function waitMs(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+async function testSupabaseConnection() {
+    const { data, error } = await supabaseClient
+        .from("solicitudes")
+        .select("id")
+        .limit(1);
+
+    if (error) {
+        console.error("Error conectando con Supabase:", error);
+        return false;
+    }
+
+    console.log("Supabase conectado correctamente:", data);
+    return true;
 }
 /* =========================================================
    CONFIGURACIÓN DE USUARIOS / PERMISOS
@@ -1081,6 +1053,8 @@ const TDM_USERS = [
     "Karina",
     "Natalie",
     "Prueba",
+    "Lenisse",
+    "Jose",
     // ... (aquí van los ~50 solicitantes, uno por línea)
 ];
 
@@ -1200,32 +1174,41 @@ async function hashPassword(userKey, pass) {
     return "d33:" + (h >>> 0).toString(16);
 }
 
-/* Las contraseñas cambiadas se guardan en Google Sheets (tabla usuarios_claves),
+/* Las contraseñas cambiadas se guardan en Supabase (tabla usuarios_claves),
    así valen en cualquier PC. Si el usuario nunca la cambió, usa la inicial. */
 async function fetchStoredHash(userKey) {
-    const result = await gasGet("getPassword", { usuario: userKey });
-    if (result.inactive) throw new Error("Este usuario está desactivado. Contacta al administrador.");
-    return result.found ? result.hash_contrasena : null;
+    const { data, error } = await supabaseClient
+        .from("usuarios_claves")
+        .select("clave_hash, reset_version")
+        .eq("usuario", userKey)
+        .maybeSingle();
+
+    if (error) {
+        console.error("❌ Error leyendo contraseña en Supabase:", error);
+        throw error;
+    }
+    if (data && Number(data.reset_version) === PASSWORD_RESET_VERSION) return data.clave_hash;
+    return null;   // sin contraseña propia (o reiniciada): aplica la inicial
 }
 
 async function saveStoredHash(userKey, hash) {
-    await gasPost("savePassword", {
-        usuario: userKey,
-        hash_contrasena: hash,
-        salt: ""
-    });
+    const { error } = await supabaseClient
+        .from("usuarios_claves")
+        .upsert({
+            usuario: userKey,
+            clave_hash: hash,
+            reset_version: PASSWORD_RESET_VERSION,
+            updated_at: new Date().toISOString()
+        }, { onConflict: "usuario" });
 
-    // Confirmar que el hash quedó guardado en la hoja.
-    for (let attempt = 0; attempt < 10; attempt++) {
-        await waitMs(700);
-        const saved = await fetchStoredHash(userKey);
-        if (saved === hash) return;
+    if (error) {
+        console.error("❌ Error guardando contraseña en Supabase:", error);
+        throw error;
     }
-    throw new Error("No se pudo confirmar el guardado de la contraseña en Google Sheets. Revisa la implementación de Apps Script.");
 }
 
 async function checkPassword(userKey, pass) {
-    const saved = await fetchStoredHash(userKey);
+    const saved = await fetchStoredHash(userKey);   // puede lanzar error si Supabase falla
     if (saved) return saved === await hashPassword(userKey, pass);
     return pass === DEFAULT_PASSWORD;
 }
@@ -1247,10 +1230,10 @@ let editingTicketId = null;      // si tiene un número, el formulario está en 
 let editEvidenciasKeep = [];     // evidencias que se conservan al editar
 let filterOnlyMine = false;
 let tickets = [];
-// Evita que una recarga de Google Sheets sobrescriba el movimiento mientras se está guardando.
+// Evita que una recarga de Supabase sobrescriba el movimiento mientras se está guardando.
 const pendingTicketWrites = new Set();
 
-// La conexión se comprueba al cargar las solicitudes desde Google Apps Script.
+testSupabaseConnection();
 
 let dbRef = null;          // conexión IndexedDB (null = modo respaldo localStorage)
 let channel = null;        // sincroniza pestañas / usuarios en el mismo navegador
@@ -1331,73 +1314,200 @@ function errMsg(err) {
     return (err.message || err.details || String(err)).toString();
 }
 
-// Google Sheets es la fuente compartida de tickets para todos los usuarios.
+// Supabase es la fuente de verdad: todos los usuarios ven los mismos tickets
 async function loadAllTickets() {
-    const result = await gasGet("listTickets");
-    const seen = new Set();
-    const output = [];
-    for (const ticket of (result.tickets || [])) {
-        const key = String(ticket.id ?? "");
-        if (!key || seen.has(key)) continue;
-        seen.add(key);
-        output.push({
-            ...ticket,
-            id: isNaN(Number(key)) ? key : Number(key),
-            status: estadoToStatus(ticket.status || ticket.estado),
-            evidencias: Array.isArray(ticket.evidencias) ? ticket.evidencias : [],
-            movementHistory: Array.isArray(ticket.movementHistory) ? ticket.movementHistory : [],
-            editHistory: Array.isArray(ticket.editHistory) ? ticket.editHistory : [],
-            edited: !!ticket.edited,
-            editAccess: ticket.editAccess && typeof ticket.editAccess === "object" ? ticket.editAccess : { granted: false }
-        });
+    const { data, error } = await supabaseClient
+        .from("solicitudes")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+    if (error) {
+        console.error("❌ Error leyendo solicitudes de Supabase:", error);
+        throw error;
     }
-    return output;
+
+    const seen = new Set();
+    const result = [];
+    for (const row of data || []) {
+        const key = String(row.numero_solicitud);
+        if (seen.has(key)) continue;          // si hay duplicados, queda el más reciente
+        seen.add(key);
+        if (isNaN(Number(row.numero_solicitud))) continue;
+        result.push(rowToTicket(row));
+    }
+    return result;
 }
 
 async function persistTicket(ticket, isNew = false) {
-    console.log("🔥 GUARDANDO TICKET EN GOOGLE SHEETS:", ticket);
 
-    // Copia local opcional: no sustituye el guardado compartido.
-    try { if (dbRef) await dbPut(ticket); }
-    catch (e) { console.warn("Copia local no guardada:", e); }
+    console.log("🔥 PERSIST TICKET:", ticket);
 
-    const ticketToSave = {
-        ...ticket,
-        id: String(ticket.id),
-        status: ticket.status || "pendiente",
+    const estadoSupabase =
+        ticket.status === "proceso"
+            ? "En proceso"
+            : ticket.status === "completada"
+                ? "Completada"
+                : ticket.status === "cancelada"
+                    ? "Cancelada"
+                    : "Pendiente";
+
+    const datosActualizados = {
         requester: ticket.requester || "",
         reporta: ticket.reporta || "",
+        contacto: ticket.contacto || "",
+
         tipo: ticket.tipo || "",
+        accion: ticket.accion || "",
+
         cliente: ticket.cliente || "",
+        sucursal: ticket.sucursal || "",
         prioridad: ticket.prioridad || "Normal",
+        recibe: ticket.recibe || "",
+        fechaRecepcion: ticket.fechaRecepcion || "",
+
+        modeloActual: ticket.modeloActual || "",
+        serialActual: ticket.serialActual || "",
+        modeloNuevo: ticket.modeloNuevo || "",
+        serialNuevo: ticket.serialNuevo || "",
+
+        facturacion: ticket.facturacion || "",
+        tipoMantenimiento: ticket.tipoMantenimiento || "",
+        usuariosAfectados: ticket.usuariosAfectados || "",
+        escaneo: ticket.escaneo || "",
+        cantidadUsuarios: ticket.cantidadUsuarios || "",
+        conectividad: ticket.conectividad || "",
+        incluyeInstalacion: ticket.incluyeInstalacion || "",
+        departamento: ticket.departamento || "",
+        ultimaReparacion: ticket.ultimaReparacion || "",
+        delivery: ticket.delivery || false,
+
+        notas: ticket.notas || "",
+        evidencias: ticket.evidencias || [],
+
+        createdAt: ticket.createdAt || "",
+
+        movedBy: ticket.movedBy || "",
+        movedAt: ticket.movedAt || "",
+        assignedCAC: ticket.assignedCAC || "",
+        assignedCACAt: ticket.assignedCACAt || "",
+
+        movementHistory: ticket.movementHistory || [],
+
+        // Edición de la solicitud
+        edited: !!ticket.edited,
+        editCount: ticket.editCount || 0,
+        lastEditedBy: ticket.lastEditedBy || "",
+        lastEditedAt: ticket.lastEditedAt || "",
+        editHistory: ticket.editHistory || [],
+        editAccess: ticket.editAccess || { granted: false },
+
         ticketNumber: ticket.ticketNumber || "",
-        createdAt: ticket.createdAt || new Date().toISOString(),
-        evidencias: Array.isArray(ticket.evidencias) ? ticket.evidencias : [],
-        movementHistory: Array.isArray(ticket.movementHistory) ? ticket.movementHistory : [],
-        editHistory: Array.isArray(ticket.editHistory) ? ticket.editHistory : [],
-        editAccess: ticket.editAccess || { granted: false }
+
+        completedBy: ticket.completedBy || "",
+        completedAt: ticket.completedAt || "",
+
+        cancelReason: ticket.cancelReason || "",
+        canceledBy: ticket.canceledBy || "",
+        canceledAt: ticket.canceledAt || ""
     };
 
-    await gasPost("saveTicket", { ticket: ticketToSave, isNew: !!isNew });
 
-    // Verificar la escritura mediante la API de lectura, ya que el navegador
-    // no permite leer directamente la respuesta del POST entre dominios.
-    let lastError = null;
-    for (let attempt = 0; attempt < 12; attempt++) {
-        await waitMs(800);
-        try {
-            const savedTickets = await loadAllTickets();
-            const saved = savedTickets.find(t => String(t.id) === String(ticket.id));
-            if (saved) {
-                console.log("✅ TICKET CONFIRMADO EN GOOGLE SHEETS:", saved.id);
-                return saved;
-            }
-        } catch (err) {
-            lastError = err;
-        }
+    // Copia local opcional (si falla, no afecta el guardado real)
+    try { if (dbRef) await dbPut(ticket); } catch (e) { console.warn("Copia local no guardada:", e); }
+
+
+    // =========================================================
+    // 2. BUSCAR SI YA EXISTE EN SUPABASE
+    // =========================================================
+
+    let existingRows = [];
+    let searchError = null;
+    if (!isNew) {
+        const r = await supabaseClient
+            .from("solicitudes")
+            .select("id")
+            .eq("numero_solicitud", String(ticket.id))
+            .order("created_at", { ascending: false })
+            .limit(1);
+        existingRows = r.data || [];
+        searchError = r.error;
     }
 
-    throw new Error("No se pudo confirmar el ticket en Google Sheets. " + (lastError ? errMsg(lastError) : "Verifica que hayas actualizado el despliegue de Apps Script."));
+    if (searchError) {
+        console.error("❌ Error buscando solicitud en Supabase:", searchError);
+        throw searchError;
+    }
+
+
+    // =========================================================
+    // 3. SI YA EXISTE → UPDATE
+    // =========================================================
+
+    if (existingRows && existingRows.length > 0) {
+
+        const dbId = existingRows[0].id;
+
+        const { data: updRows, error } = await supabaseClient
+            .from("solicitudes")
+            .update({
+                tipo_solicitud: ticket.tipo || "Sin especificar",
+                cliente: ticket.cliente || "",
+                solicitado_por: ticket.reporta || ticket.requester || "",
+                fecha_solicitud: ticket.createdAt || new Date().toISOString(),
+                prioridad: ticket.prioridad || "Normal",
+                estado: estadoSupabase,
+                numero_ticket: ticket.ticketNumber || null,
+                datos: datosActualizados,
+                updated_at: new Date().toISOString()
+            })
+            .eq("id", dbId)
+            .select();
+
+        if (error) {
+            console.error("❌ Error actualizando solicitud en Supabase:", error);
+            throw error;
+        }
+
+        if (!updRows || !updRows.length) {
+            const e = new Error("Supabase no permitió actualizar la solicitud (falta la política UPDATE en la tabla 'solicitudes').");
+            console.error("❌", e.message);
+            throw e;
+        }
+
+        console.log("✅ SOLICITUD ACTUALIZADA EN SUPABASE:", updRows[0]);
+
+        return updRows[0];
+    }
+
+
+    // =========================================================
+    // 4. SI NO EXISTE → INSERTAR NUEVA
+    // =========================================================
+
+    const { data, error } = await supabaseClient
+        .from("solicitudes")
+        .insert({
+            numero_solicitud: String(ticket.id),
+            tipo_solicitud: ticket.tipo || "Sin especificar",
+            cliente: ticket.cliente || "",
+            solicitado_por: ticket.reporta || ticket.requester || "",
+            fecha_solicitud: ticket.createdAt || new Date().toISOString(),
+            prioridad: ticket.prioridad || "Normal",
+            estado: estadoSupabase,
+            numero_ticket: ticket.ticketNumber || null,
+            datos: datosActualizados
+        })
+        .select()
+        .single();
+
+    if (error) {
+        console.error("❌ Error creando solicitud en Supabase:", error);
+        throw error;
+    }
+
+    console.log("✅ SOLICITUD CREADA EN SUPABASE:", data);
+
+    return data;
 }
 
 async function reloadTickets() {
@@ -2810,6 +2920,12 @@ function setupDynamicFields(type) {
             showField("grp-departamento");
             break;
 
+        case "RETIRO DE DOCUMENTO":
+            hideField("grp-recribe")
+            hideField("grp-fecha-recepcion");
+            hideField("grp-departamento");
+            break;
+
         case "MANTENIMIENTO":
             showField("grp-recibe");
             showField("grp-modelo-nuevo");
@@ -3256,13 +3372,6 @@ function openDetailModal(id) {
             </div>
         ` : ""}
 
-        ${(() => {
-            const labels = { accion:"Tipo de Acción", sucursal:"Sucursal", contacto:"Contacto", recibe:"Recibe en sucursal", fechaRecepcion:"Fecha recepción", reporta:"Usuario que reporta", requester:"Solicitado por", modeloActual:"Modelo Actual / Retiro", serialActual:"Serial Actual / Retiro", modeloNuevo:"Modelo del Equipo", serialNuevo:"Serial del Equipo", facturacion:"Tipo de Facturación", tipoMantenimiento:"Mantenimiento", usuariosAfectados:"Usuarios Afectados", escaneo:"Tipo de Escaneo", cantidadUsuarios:"Cantidad de Usuarios", conectividad:"Conectividad", incluyeInstalacion:"Incluye Instalación", departamento:"Departamento", ultimaReparacion:"Última Reparación", notas:"Notas / Observaciones" };
-            const already = new Set(["accion","prioridad","cliente","sucursal","contacto","recibe","fechaRecepcion","reporta","requester","modeloActual","serialActual","modeloNuevo","serialNuevo","facturacion","tipoMantenimiento","usuariosAfectados","escaneo","cantidadUsuarios","conectividad","incluyeInstalacion","departamento","ultimaReparacion","delivery","movedBy","movedAt","completedBy","completedAt","canceledBy","canceledAt","cancelReason","id","tipo","status","createdAt","ticketNumber","evidencias","movementHistory","editHistory","editAccess","assignedCAC","assignedCACAt","edited","editCount","created_by"]);
-            const internal = /^(id|status|createdAt|updatedAt|ticketNumber|evidencias|movementHistory|editHistory|editAccess|assignedCAC|assignedCACAt|movedBy|movedAt|edited|editCount|completedBy|completedAt|canceledBy|canceledAt|cancelReason)$/i;
-            const extras = Object.keys(ticket).filter(k => !already.has(k) && !internal.test(k) && ticket[k] !== null && ticket[k] !== undefined && String(ticket[k]).trim() !== "" && typeof ticket[k] !== "object" && typeof ticket[k] !== "boolean");
-            return extras.length ? `<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">${extras.map(k => detailItem(labels[k] || k.replace(/([A-Z])/g," $1").replace(/^./,c=>c.toUpperCase()), ticket[k])).join("")}</div>` : "";
-        })()}
         <div class="space-y-4">
             ${textDetail("Notas / Observaciones", ticket.notas)}
             ${galeriaHtml}
@@ -3296,28 +3405,7 @@ function textDetail(label, valueText) {
             </div>
         </div>`;
 }
-    
-/* ---------- Enlaces de Drive para mostrar evidencias ---------- */
-function evFileId(ev) {
-    if (!ev) return "";
-    if (ev.fileId) return ev.fileId;
-    const m = String(ev.url || "").match(/[-\w]{25,}/);
-    return m ? m[0] : "";
-}
-function evImageUrl(ev, size = "w1600") {
-    if (ev.data) return ev.data;
-    const id = evFileId(ev);
-    return id ? `https://drive.google.com/thumbnail?id=${id}&sz=${size}` : (ev.previewUrl || ev.url || "");
-}
-function evPdfPreviewUrl(ev) {
-    const id = evFileId(ev);
-    return id ? `https://drive.google.com/file/d/${id}/preview` : (ev.url || "");
-}
-function evDownloadUrl(ev) {
-    const id = evFileId(ev);
-    return id ? `https://drive.google.com/uc?export=download&id=${id}` : (ev.url || "");
-}
-    
+
 /* ---------- Visor interno de imágenes ---------- */
 function isLightboxOpen() {
     return !document.getElementById("lightbox-modal").classList.contains("hidden");
@@ -3348,22 +3436,39 @@ function revokeLbBlob() {
 async function renderLightbox() {
     const ev = lbList[lbIndex];
     if (!ev) return closeLightbox();
+
     document.getElementById("lb-name").innerText = ev.name || "Evidencia";
     document.getElementById("lb-counter").innerText = `${lbIndex + 1} / ${lbList.length}${lbLabel ? " · " + lbLabel : ""}`;
     const multi = lbList.length > 1;
     document.getElementById("lb-prev").style.display = multi ? "" : "none";
     document.getElementById("lb-next").style.display = multi ? "" : "none";
-    const img = document.getElementById("lb-img"), pdfBox = document.getElementById("lb-pdf-box"), frame = document.getElementById("lb-pdf");
-    const mySeq = ++lbSeq; revokeLbBlob();
-    const directUrl = ev.url || ev.webViewLink || '';
+
+    const img = document.getElementById("lb-img");
+    const pdfBox = document.getElementById("lb-pdf-box");
+    const frame = document.getElementById("lb-pdf");
+    const mySeq = ++lbSeq;
+    revokeLbBlob();
+
     if (isPdfEv(ev)) {
-        img.style.display = "none"; img.src = ""; pdfBox.classList.remove("hidden"); pdfBox.classList.add("flex");
+        img.style.display = "none";
+        img.src = "";
+        pdfBox.classList.remove("hidden");
+        pdfBox.classList.add("flex");
         frame.src = "about:blank";
-        if (ev.data) { try { const blob = dataUrlToBlob(ev.data, "application/pdf"); if (mySeq !== lbSeq) return; lbBlobUrl = URL.createObjectURL(blob); frame.src = lbBlobUrl; } catch(e) { if (directUrl) frame.src = directUrl; } }
-        else if (evFileId(ev)) frame.src = evPdfPreviewUrl(ev);
-        else if (directUrl) frame.src = directUrl;
+        try {
+            const blob = dataUrlToBlob(ev.data, "application/pdf");
+            if (mySeq !== lbSeq) return;
+            lbBlobUrl = URL.createObjectURL(blob);
+            frame.src = lbBlobUrl;
+        } catch (err) {
+            console.error("No se pudo mostrar el PDF:", err);
+        }
     } else {
-        pdfBox.classList.add("hidden"); pdfBox.classList.remove("flex"); frame.src = "about:blank"; img.style.display = ""; img.src = evImageUrl(ev);
+        pdfBox.classList.add("hidden");
+        pdfBox.classList.remove("flex");
+        frame.src = "about:blank";
+        img.style.display = "";
+        img.src = ev.data;
     }
 }
 
@@ -3385,24 +3490,40 @@ function closeLightbox() {
 }
 
 function openCurrentEvidenceInTab() {
-    const ev = lbList[lbIndex]; if (!ev) return;
-    const url = ev.url || ev.webViewLink || '';
-    if (!ev.data && url) { window.open(url, "_blank", "noopener"); return; }
-    try { const blobUrl = URL.createObjectURL(dataUrlToBlob(ev.data, isPdfEv(ev) ? "application/pdf" : null)); window.open(blobUrl, "_blank", "noopener"); setTimeout(() => URL.revokeObjectURL(blobUrl), 60000); }
-    catch (err) { console.error(err); if (url) window.open(url, "_blank", "noopener"); else showCustomAlert("No se pudo abrir el archivo.", "Error", "error"); }
+    const ev = lbList[lbIndex];
+    if (!ev) return;
+    try {
+        const url = URL.createObjectURL(dataUrlToBlob(ev.data, isPdfEv(ev) ? "application/pdf" : null));
+        window.open(url, "_blank");
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err) {
+        console.error(err);
+        showCustomAlert("No se pudo abrir el archivo.", "Error", "error");
+    }
 }
 
 function downloadEvidenceObj(ev, fallbackName) {
-    if (!ev) return;
-    if (!ev.data && (ev.url || ev.webViewLink)) { window.open(evDownloadUrl(ev), "_blank", "noopener"); return; }
-    if (!ev.data) return;
+    if (!ev || !ev.data) return;
     try {
-        const pdf = isPdfEv(ev), blob = dataUrlToBlob(ev.data, pdf ? "application/pdf" : null);
+        const pdf = isPdfEv(ev);
+        const blob = dataUrlToBlob(ev.data, pdf ? "application/pdf" : null);
         let name = (ev.name || fallbackName || "evidencia").replace(/[\\\/:*?"<>|]+/g, "_");
         if (pdf && !/\.pdf$/i.test(name)) name = name.replace(/\.[^.]+$/, "") + ".pdf";
         if (!pdf && !/\.[a-z0-9]{2,5}$/i.test(name)) name += ".jpg";
-        const url = URL.createObjectURL(blob), a = document.createElement("a"); a.href = url; a.download = name; a.style.display = "none"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000);
-    } catch (err) { console.error(err); showCustomAlert("No se pudo descargar el archivo.", "Error", "error"); }
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = name;
+        a.style.display = "none";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+    } catch (err) {
+        console.error(err);
+        showCustomAlert("No se pudo descargar el archivo.", "Error", "error");
+    }
 }
 
 function downloadEvidence(ticketId, index) {
@@ -3453,12 +3574,13 @@ function evThumbHtml(ev, onclick, h) {
     if (isPdfEv(ev)) {
         return `<button type="button" onclick="${onclick}" title="Ver PDF" class="block w-full">
             <div class="${h} w-full rounded-lg mb-1 bg-rose-50 border border-rose-100 flex flex-col items-center justify-center text-rose-600 hover:bg-rose-100 transition">
-                <i class="fa-solid fa-file-pdf text-3xl"></i><span class="text-[10px] font-bold mt-1">PDF · clic para ver</span>
-            </div></button>`;
+                <i class="fa-solid fa-file-pdf text-3xl"></i>
+                <span class="text-[10px] font-bold mt-1">PDF · clic para ver</span>
+            </div>
+        </button>`;
     }
-    const src = evImageUrl(ev, "w400");
     return `<button type="button" onclick="${onclick}" title="Ver imagen" class="block w-full">
-        <img src="${escapeHtml(src)}" class="${h} w-full object-cover rounded-lg mb-1 hover:opacity-90 transition" onerror="this.style.display='none'">
+        <img src="${ev.data}" class="${h} w-full object-cover rounded-lg mb-1 hover:opacity-90 transition">
     </button>`;
 }
 
